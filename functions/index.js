@@ -982,6 +982,17 @@ exports.unlockPrompt = onRequest(
         });
       }
 
+      // Pro subscribers: return content WITHOUT writing a permanent unlock receipt.
+      // This means when their subscription ends, they lose access.
+      if (hasFullAccess) {
+        const contentSnap = await db.collection("prompts").doc(promptId).collection("private").doc("content").get();
+        return res.status(200).json({
+          success: true,
+          accessMethod: "subscription",
+          fullPrompt: contentSnap.exists ? contentSnap.data().fullPrompt : "",
+        });
+      }
+
       // Free tier cap check — try free unlocks first, then paid credits
       let unlockMethod = hasFullAccess ? "full_access" : "free_unlock";
 
@@ -1341,6 +1352,136 @@ exports.createPolarPortalSession = onRequest(
       return res.status(200).json({ url: portalUrl });
     } catch (err) {
       console.error("createPolarPortalSession error:", err);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+
+// ═══════════════════════════════════════════════════════════
+//  getAdminDashboardStats — admin-only analytics endpoint
+//  Returns user counts, subscriber counts, credit stats
+// ═══════════════════════════════════════════════════════════
+exports.getAdminDashboardStats = onRequest(
+  { cors: true, maxInstances: 3, region: "us-central1" },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Method not allowed" });
+    }
+
+    try {
+      const { idToken } = req.body;
+      if (!idToken) {
+        return res.status(400).json({ error: "Missing idToken" });
+      }
+
+      // Verify admin
+      let decodedToken;
+      try {
+        decodedToken = await admin.auth().verifyIdToken(idToken);
+      } catch (authErr) {
+        return res.status(401).json({ error: "Invalid or expired token" });
+      }
+
+      if (decodedToken.email !== ADMIN_EMAIL) {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+
+      // 1. Total Users
+      const usersCountSnap = await db.collection("users").count().get();
+      const totalUsers = usersCountSnap.data().count;
+
+      // 2. Active Subscribers (pro_monthly or pro_yearly)
+      const monthlySnap = await db.collection("users")
+        .where("tier", "==", "pro_monthly").count().get();
+      const yearlySnap = await db.collection("users")
+        .where("tier", "==", "pro_yearly").count().get();
+      const activeSubscribers = monthlySnap.data().count + yearlySnap.data().count;
+
+      // 3. Total Prompts
+      const promptsSnap = await db.collection("prompts").count().get();
+      const totalPrompts = promptsSnap.data().count;
+
+      // 4. Total Unlocks across all users
+      let totalUnlocks = 0;
+      try {
+        const unlocksSnap = await db.collectionGroup("unlocked").count().get();
+        totalUnlocks = unlocksSnap.data().count;
+      } catch (e) {
+        console.warn("collectionGroup unlocked count failed:", e.message);
+      }
+
+      // 5. Credits purchased, spent, and revenue
+      let creditsBought = 0;
+      let creditsSpent = 0;
+      let totalRevenueCents = 0;
+
+      try {
+        // Try fast collection group queries first
+        const txSnap = await db.collectionGroup("transactions")
+          .where("type", "==", "credit_pack").get();
+        txSnap.forEach(doc => {
+          const d = doc.data();
+          const pack = d.pack || d.credit_pack;
+          if (pack && CREDIT_PACK_MAP[pack]) {
+            creditsBought += CREDIT_PACK_MAP[pack].amount;
+          }
+          if (d.amount) totalRevenueCents += d.amount;
+        });
+
+        const subTxSnap = await db.collectionGroup("transactions")
+          .where("type", "==", "subscription").get();
+        subTxSnap.forEach(doc => {
+          if (doc.data().amount) totalRevenueCents += doc.data().amount;
+        });
+
+        const spendSnap = await db.collectionGroup("credit_transactions")
+          .where("type", "==", "spend").get();
+        spendSnap.forEach(doc => {
+          creditsSpent += Math.abs(doc.data().amount || 0);
+        });
+      } catch (e) {
+        console.warn("Collection group query failed, using per-user fallback:", e.message);
+
+        // Fallback: iterate through each user's subcollections manually
+        const allUsers = await db.collection("users").select().get();
+        for (const userDoc of allUsers.docs) {
+          try {
+            const txDocs = await userDoc.ref.collection("transactions").get();
+            txDocs.forEach(doc => {
+              const d = doc.data();
+              if (d.type === "credit_pack") {
+                const pack = d.pack || d.credit_pack;
+                if (pack && CREDIT_PACK_MAP[pack]) {
+                  creditsBought += CREDIT_PACK_MAP[pack].amount;
+                }
+              }
+              if (d.amount) totalRevenueCents += d.amount;
+            });
+
+            const creditDocs = await userDoc.ref.collection("credit_transactions").get();
+            creditDocs.forEach(doc => {
+              if (doc.data().type === "spend") {
+                creditsSpent += Math.abs(doc.data().amount || 0);
+              }
+            });
+          } catch (innerErr) {
+            console.warn(`Fallback failed for user ${userDoc.id}:`, innerErr.message);
+          }
+        }
+      }
+
+      return res.status(200).json({
+        totalUsers,
+        activeSubscribers,
+        totalPrompts,
+        totalUnlocks,
+        creditsBought,
+        creditsSpent,
+        totalRevenueCents,
+      });
+    } catch (err) {
+      console.error("getAdminDashboardStats error:", err);
       return res.status(500).json({ error: "Internal server error" });
     }
   }

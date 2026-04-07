@@ -39,7 +39,7 @@ const PricingPage = () => {
                     const data = await res.json();
                     
                     if (data.url) {
-                        window.open(data.url, '_blank');
+                        window.location.href = data.url;
                         setUpgrading(false);
                         return; // Successfully opened portal, stop here
                     } else {
@@ -87,7 +87,7 @@ const PricingPage = () => {
                 return;
             }
 
-            window.open(data.checkout_url, '_blank');
+            window.location.href = data.checkout_url;
             setUpgrading(false);
         } catch (err) {
             console.error('Upgrade/Portal failed:', err);
@@ -127,7 +127,7 @@ const PricingPage = () => {
                 return;
             }
 
-            window.open(data.checkout_url, '_blank');
+            window.location.href = data.checkout_url;
             setBuyingPack(null);
         } catch (err) {
             console.error('Credit checkout failed:', err);

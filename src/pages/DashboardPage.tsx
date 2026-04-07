@@ -435,7 +435,7 @@ const DashboardPage = () => {
                                                 });
                                                 const data = await res.json();
                                                 if (data.url) {
-                                                    window.open(data.url, '_blank');
+                                                    window.location.href = data.url;
                                                     btn.disabled = false;
                                                     btn.textContent = 'Manage Subscription';
                                                 } else {

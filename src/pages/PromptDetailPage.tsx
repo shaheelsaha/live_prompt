@@ -95,7 +95,27 @@ const PromptDetailPage = () => {
             const favSnap = await getDoc(favRef);
             setIsFav(favSnap.exists());
 
-            // Check if already unlocked (for BOTH free and pro users)
+            // Pro subscribers: auto-reveal ALL prompts (no unlock record needed)
+            if (hasFullAccess) {
+                try {
+                    const idToken = await user.getIdToken();
+                    const resp = await fetch(`${FUNCTIONS_BASE}/getPromptContent`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ promptId, idToken }),
+                    });
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        setFullPromptText(data.fullPrompt || '');
+                        setIsUnlocked(true);
+                    }
+                } catch (err) {
+                    console.error('Error fetching prompt content:', err);
+                }
+                return; // Skip unlock record checks for subscribers
+            }
+
+            // Free/credit users: check if they own a permanent unlock receipt
             const unlockRef = doc(db, 'users', user.uid, 'unlocked', promptId);
             const unlockSnap = await getDoc(unlockRef);
             const alreadyUnlocked = unlockSnap.exists();

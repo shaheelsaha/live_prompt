@@ -8,7 +8,8 @@ import { useAuth } from '../context/AuthContext';
 import type { Prompt } from '../types/Prompt';
 import {
     Plus, Save, Trash2, Edit3, X, Image, Upload, Eye,
-    ArrowLeft, Sparkles, AlertTriangle, ShieldOff, Video, FileText
+    ArrowLeft, Sparkles, AlertTriangle, ShieldOff, Video, FileText,
+    Users, Crown, DollarSign, TrendingUp, Download, BarChart3
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { compressImage } from '../utils/imageCompression';
@@ -59,6 +60,16 @@ const emptyForm: PromptForm = {
     outputMedia: '', outputMediaThumb: '', outputMediaType: 'image', tutorialVideo: ''
 };
 
+interface DashboardStats {
+    totalUsers: number;
+    activeSubscribers: number;
+    totalPrompts: number;
+    totalUnlocks: number;
+    creditsBought: number;
+    creditsSpent: number;
+    totalRevenueCents: number;
+}
+
 const AdminPage = () => {
     const { user } = useAuth();
     const FUNCTIONS_BASE = 'https://us-central1-prompt-factory-952f9.cloudfunctions.net';
@@ -68,15 +79,18 @@ const AdminPage = () => {
     const [showForm, setShowForm] = useState(false);
     const [saving, setSaving] = useState(false);
     const [uploading, setUploading] = useState<'before' | 'after' | 'output' | 'tutorial' | null>(null);
+    const [dashStats, setDashStats] = useState<DashboardStats | null>(null);
+    const [statsLoading, setStatsLoading] = useState(false);
     const beforeFileRef = useRef<HTMLInputElement>(null);
     const afterFileRef = useRef<HTMLInputElement>(null);
     const outputFileRef = useRef<HTMLInputElement>(null);
     const tutorialFileRef = useRef<HTMLInputElement>(null);
 
-    // Load prompts
+    // Load prompts + dashboard stats
     useEffect(() => {
         fetchPrompts();
-    }, []);
+        fetchDashboardStats();
+    }, [user]);
 
     const fetchPrompts = async () => {
         try {
@@ -87,6 +101,35 @@ const AdminPage = () => {
             console.error('Error fetching prompts:', err);
         }
     };
+
+    const fetchDashboardStats = async () => {
+        if (!user) return;
+        setStatsLoading(true);
+        try {
+            const idToken = await user.getIdToken();
+            const resp = await fetch(`${FUNCTIONS_BASE}/getAdminDashboardStats`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ idToken }),
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                setDashStats(data);
+            }
+        } catch (err) {
+            console.error('Failed to fetch dashboard stats:', err);
+        } finally {
+            setStatsLoading(false);
+        }
+    };
+
+    // Compute category breakdown from loaded prompts
+    const categoryBreakdown = prompts.reduce<Record<string, number>>((acc, p) => {
+        const cat = p.category || 'Other';
+        acc[cat] = (acc[cat] || 0) + 1;
+        return acc;
+    }, {});
+    const sortedCategories = Object.entries(categoryBreakdown).sort((a, b) => b[1] - a[1]);
 
     // Upload file to Firebase Storage
     const handleFileUpload = async (file: File, type: 'before' | 'after' | 'output' | 'tutorial') => {
@@ -310,6 +353,156 @@ const AdminPage = () => {
                         <button className="btn btn-primary" onClick={() => setShowForm(true)}>
                             <Plus size={16} /> Add New Prompt
                         </button>
+                    )}
+                </div>
+
+                {/* ══════════════════════════════════ */}
+                {/*  DASHBOARD INSIGHTS               */}
+                {/* ══════════════════════════════════ */}
+                <div style={{
+                    marginBottom: 32,
+                    padding: 24,
+                    background: 'rgba(255,255,255,0.02)',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                    borderRadius: 16,
+                }}>
+                    <h2 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <BarChart3 size={18} style={{ color: 'var(--accent-neon)' }} /> Dashboard Insights
+                    </h2>
+
+                    {/* KPI Cards */}
+                    <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+                        gap: 12,
+                        marginBottom: 24,
+                    }}>
+                        {/* Total Users */}
+                        <div style={{
+                            background: 'rgba(59,130,246,0.06)',
+                            border: '1px solid rgba(59,130,246,0.15)',
+                            borderRadius: 12,
+                            padding: '16px 14px',
+                            textAlign: 'center',
+                        }}>
+                            <Users size={20} style={{ color: '#3b82f6', marginBottom: 6 }} />
+                            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#fff' }}>
+                                {statsLoading ? '—' : dashStats?.totalUsers ?? 0}
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>Total Users</div>
+                        </div>
+
+                        {/* Active Subscribers */}
+                        <div style={{
+                            background: 'rgba(168,85,247,0.06)',
+                            border: '1px solid rgba(168,85,247,0.15)',
+                            borderRadius: 12,
+                            padding: '16px 14px',
+                            textAlign: 'center',
+                        }}>
+                            <Crown size={20} style={{ color: '#a855f7', marginBottom: 6 }} />
+                            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#fff' }}>
+                                {statsLoading ? '—' : dashStats?.activeSubscribers ?? 0}
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>Pro Subscribers</div>
+                        </div>
+
+                        {/* Revenue */}
+                        <div style={{
+                            background: 'rgba(34,197,94,0.06)',
+                            border: '1px solid rgba(34,197,94,0.15)',
+                            borderRadius: 12,
+                            padding: '16px 14px',
+                            textAlign: 'center',
+                        }}>
+                            <DollarSign size={20} style={{ color: '#22c55e', marginBottom: 6 }} />
+                            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#fff' }}>
+                                {statsLoading ? '—' : `$${((dashStats?.totalRevenueCents ?? 0) / 100).toFixed(2)}`}
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>Total Revenue</div>
+                        </div>
+
+                        {/* Total Unlocks */}
+                        <div style={{
+                            background: 'rgba(234,179,8,0.06)',
+                            border: '1px solid rgba(234,179,8,0.15)',
+                            borderRadius: 12,
+                            padding: '16px 14px',
+                            textAlign: 'center',
+                        }}>
+                            <Download size={20} style={{ color: '#eab308', marginBottom: 6 }} />
+                            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#fff' }}>
+                                {statsLoading ? '—' : dashStats?.totalUnlocks ?? 0}
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>Prompt Unlocks</div>
+                        </div>
+
+                        {/* Credits Bought */}
+                        <div style={{
+                            background: 'rgba(14,165,233,0.06)',
+                            border: '1px solid rgba(14,165,233,0.15)',
+                            borderRadius: 12,
+                            padding: '16px 14px',
+                            textAlign: 'center',
+                        }}>
+                            <TrendingUp size={20} style={{ color: '#0ea5e9', marginBottom: 6 }} />
+                            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#fff' }}>
+                                {statsLoading ? '—' : dashStats?.creditsBought ?? 0}
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>Credits Bought</div>
+                        </div>
+
+                        {/* Credits Spent */}
+                        <div style={{
+                            background: 'rgba(239,68,68,0.06)',
+                            border: '1px solid rgba(239,68,68,0.15)',
+                            borderRadius: 12,
+                            padding: '16px 14px',
+                            textAlign: 'center',
+                        }}>
+                            <Sparkles size={20} style={{ color: '#ef4444', marginBottom: 6 }} />
+                            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#fff' }}>
+                                {statsLoading ? '—' : dashStats?.creditsSpent ?? 0}
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>Credits Spent</div>
+                        </div>
+                    </div>
+
+                    {/* Category Breakdown */}
+                    {sortedCategories.length > 0 && (
+                        <div>
+                            <h3 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                Prompts by Category
+                            </h3>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                {sortedCategories.map(([cat, count]) => (
+                                    <span
+                                        key={cat}
+                                        style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: 6,
+                                            padding: '6px 12px',
+                                            background: 'rgba(255,255,255,0.04)',
+                                            border: '1px solid rgba(255,255,255,0.08)',
+                                            borderRadius: 8,
+                                            fontSize: '0.8rem',
+                                            color: '#ccc',
+                                        }}
+                                    >
+                                        {cat}
+                                        <span style={{
+                                            background: 'rgba(168,85,247,0.15)',
+                                            color: '#a855f7',
+                                            padding: '2px 7px',
+                                            borderRadius: 6,
+                                            fontWeight: 700,
+                                            fontSize: '0.75rem',
+                                        }}>{count}</span>
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
                     )}
                 </div>
 
