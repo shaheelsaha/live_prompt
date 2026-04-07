@@ -1,0 +1,73 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ═══════════════════════════════════════════
+    //  Helper: check if request is from admin
+    // ═══════════════════════════════════════════
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email == 'shaheelsaha55@gmail.com';
+    }
+
+    // ═══════════════════════════════════════════
+    //  Prompts: public read, admin-only write
+    // ═══════════════════════════════════════════
+    match /prompts/{promptId} {
+      allow read: if true;
+      allow write: if isAdmin();
+
+      // Private content (fullPrompt text) — NO client reads
+      // Only accessible via Cloud Functions (admin SDK)
+      match /private/{doc} {
+        allow read, write: if false;
+      }
+    }
+
+    // ═══════════════════════════════════════════
+    //  Contact messages: anyone can create, admin reads
+    // ═══════════════════════════════════════════
+    match /contactMessages/{messageId} {
+      allow create: if request.resource.data.keys().hasAll(['name', 'email', 'message'])
+        && request.resource.data.name is string
+        && request.resource.data.email is string
+        && request.resource.data.message is string
+        && request.resource.data.name.size() <= 200
+        && request.resource.data.email.size() <= 200
+        && request.resource.data.message.size() <= 5000;
+      allow read: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // ═══════════════════════════════════════════
+    //  Users: each user owns their own data
+    // ═══════════════════════════════════════════
+    match /users/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      // Allow users to create their own profile, but force them to be 'free' and 0 credits
+      allow create: if request.auth != null 
+        && request.auth.uid == userId
+        && request.resource.data.tier == 'free'
+        && (!request.resource.data.keys().hasAll(['credits']) || request.resource.data.credits == 0)
+        && (!request.resource.data.keys().hasAll(['subscription']) || request.resource.data.subscription == null);
+
+      // Allow users to update their profile (like name), but strictly PREVENT tampering with billing fields
+      allow update: if request.auth != null 
+        && request.auth.uid == userId
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['tier', 'credits', 'subscription']));
+
+
+      // Subcollections: favorites, unlocked
+      match /{subcol}/{docId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    // ═══════════════════════════════════════════
+    //  Webhook logs: no client access at all
+    // ═══════════════════════════════════════════
+    match /webhook_logs/{logId} {
+      allow read, write: if false;
+    }
+  }
+}
