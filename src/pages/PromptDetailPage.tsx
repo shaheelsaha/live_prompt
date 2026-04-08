@@ -359,7 +359,9 @@ const PromptDetailPage = () => {
                 <div style={{ marginBottom: 28 }}>
                     {/* Tags */}
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
-                        <span className="tag tag-platform" style={{ fontSize: '0.75rem' }}>{prompt.platform}</span>
+                        {(Array.isArray(prompt.platform) ? prompt.platform : [prompt.platform]).map((plat: string) => (
+                            <span key={plat} className="tag tag-platform" style={{ fontSize: '0.75rem' }}>{plat}</span>
+                        ))}
                         <span className="tag" style={{ fontSize: '0.75rem' }}>{prompt.category}</span>
                         <span className="tag" style={{
                             fontSize: '0.75rem',
@@ -444,7 +446,7 @@ const PromptDetailPage = () => {
                             )}
                             <div className="detail-feature-item">
                                 <div className="detail-feature-icon"><Sparkles size={16} /></div>
-                                <span>Works on {prompt.platform}</span>
+                                <span>Works on {Array.isArray(prompt.platform) ? prompt.platform.join(', ') : prompt.platform}</span>
                             </div>
                             <div className="detail-feature-item">
                                 <div className="detail-feature-icon"><Check size={16} /></div>

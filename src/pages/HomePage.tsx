@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, limit, where } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import Hero from '../components/Hero';
 import SearchBar from '../components/SearchBar';
@@ -8,16 +8,9 @@ import PromptCard from '../components/PromptCard';
 import type { Prompt } from '../types/Prompt';
 import { TrendingUp, Filter, Layers } from 'lucide-react';
 
-const platforms = ['All', 'Midjourney', 'DALL-E', 'Sora', 'Veo', 'Nano banana', 'Runway'];
+const HOMEPAGE_LIMIT = 200; // Max prompts for the default "All" view
 
-const categories = [
-    'All', 'Product & E-commerce', 'Real Estate & Interior', 'Fashion & Beauty',
-    'Food & Restaurant', 'Sports & Fitness', 'Travel & Nature',
-    'Portrait & Headshot', 'Automotive', 'Animation & Cartoon',
-    'Logo & Branding', 'Social Media Content', 'Film & Cinematic',
-    'Logo & Branding', 'Social Media Content', 'Film & Cinematic',
-    'Music & Entertainment', 'Education & Explainer', 'Gaming & Sci-Fi',
-];
+const platforms = ['All', 'Midjourney', 'Stable Diffusion', 'Grok', 'Sora', 'Runway', 'Nano banana', 'ChatGPT'];
 
 // Helper to shuffle array (Fisher-Yates)
 const shuffleArray = (array: any[]) => {
@@ -31,7 +24,8 @@ const shuffleArray = (array: any[]) => {
 
 const HomePage = () => {
     const [allPrompts, setAllPrompts] = useState<Prompt[]>([]);
-    const [visibleCount, setVisibleCount] = useState(30); // Need more items for 3 distinct rows
+    const [categoryNames, setCategoryNames] = useState<string[]>([]);
+    const [visibleCount, setVisibleCount] = useState(30);
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedPlatform, setSelectedPlatform] = useState('All');
     const [selectedCategory, setSelectedCategory] = useState('All');
@@ -43,21 +37,25 @@ const HomePage = () => {
         if (q) setSearchQuery(q);
     }, [searchParams]);
 
-    // Load initial prompts from Firestore
+    // Initial load: top 200 prompts + extract all unique category names
     useEffect(() => {
         const fetchPrompts = async () => {
             try {
-                const q = query(collection(db, 'prompts'), orderBy('impressions', 'desc'), limit(50));
+                // Fetch top 200 most popular for the default scrolling view
+                const q = query(collection(db, 'prompts'), orderBy('impressions', 'desc'), limit(HOMEPAGE_LIMIT));
                 const snapshot = await getDocs(q);
-                
+
                 if (!snapshot.empty) {
                     const firestorePrompts = snapshot.docs.map(doc => ({
                         id: doc.id,
                         ...doc.data(),
                     })) as Prompt[];
-                    
-                    // Shuffle the top 50 most popular prompts
+
                     setAllPrompts(shuffleArray(firestorePrompts));
+
+                    // Extract unique categories from loaded data
+                    const cats = Array.from(new Set(firestorePrompts.map(p => p.category).filter(Boolean))).sort();
+                    setCategoryNames(cats);
                 }
             } catch (err) {
                 console.log('Could not fetch prompts:', err);
@@ -68,19 +66,89 @@ const HomePage = () => {
         fetchPrompts();
     }, []);
 
+    // When a category is selected, fetch that category's prompts from Firestore directly
+    useEffect(() => {
+        if (selectedCategory === 'All') return; // Already have the default data
+
+        const fetchCategoryPrompts = async () => {
+            setLoading(true);
+            try {
+                const q = query(
+                    collection(db, 'prompts'),
+                    where('category', '==', selectedCategory),
+                    orderBy('impressions', 'desc'),
+                    limit(200)
+                );
+                const snapshot = await getDocs(q);
+                const categoryPrompts = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data(),
+                })) as Prompt[];
+
+                setAllPrompts(categoryPrompts);
+                setVisibleCount(30);
+            } catch (err) {
+                console.log('Could not fetch category prompts:', err);
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchCategoryPrompts();
+    }, [selectedCategory]);
+
+    // When switching back to "All", reload the default set
+    const handleCategoryChange = (cat: string) => {
+        if (cat === 'All' && selectedCategory !== 'All') {
+            // Re-fetch the default top 200
+            setSelectedCategory('All');
+            setLoading(true);
+            const fetchDefault = async () => {
+                try {
+                    const q = query(collection(db, 'prompts'), orderBy('impressions', 'desc'), limit(HOMEPAGE_LIMIT));
+                    const snapshot = await getDocs(q);
+                    if (!snapshot.empty) {
+                        const firestorePrompts = snapshot.docs.map(doc => ({
+                            id: doc.id, ...doc.data(),
+                        })) as Prompt[];
+                        setAllPrompts(shuffleArray(firestorePrompts));
+                    }
+                } catch (err) {
+                    console.log('Could not fetch prompts:', err);
+                } finally {
+                    setLoading(false);
+                }
+            };
+            fetchDefault();
+        } else {
+            setSelectedCategory(cat);
+        }
+    };
+
+    const categories = ['All', ...categoryNames];
+
     // Load more prompts
     const loadMore = () => {
         setVisibleCount(prev => prev + 30);
     };
 
+    // Helper: normalize platform field (string or string[]) to string[]
+    const getPlatforms = (p: any): string[] => {
+        if (Array.isArray(p)) return p;
+        if (typeof p === 'string') return [p];
+        return [];
+    };
+
     const filteredPrompts = allPrompts.filter((p) => {
+        const plats = getPlatforms(p.platform);
+        const platString = plats.join(' ').toLowerCase();
+
         const matchesSearch = searchQuery === '' ||
             p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
             p.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            p.platform.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            platString.includes(searchQuery.toLowerCase()) ||
             p.problem.toLowerCase().includes(searchQuery.toLowerCase());
 
-        const matchesPlatform = selectedPlatform === 'All' || p.platform === selectedPlatform;
+        const matchesPlatform = selectedPlatform === 'All' || plats.includes(selectedPlatform);
         const matchesCategory = selectedCategory === 'All' || p.category === selectedCategory;
 
         return matchesSearch && matchesPlatform && matchesCategory;
@@ -94,6 +162,7 @@ const HomePage = () => {
     const row1Prompts = visibleFilteredPrompts.slice(0, rowCapacity);
     const row2Prompts = visibleFilteredPrompts.slice(rowCapacity, rowCapacity * 2);
     const row3Prompts = visibleFilteredPrompts.slice(rowCapacity * 2);
+
 
     return (
         <>
@@ -113,7 +182,7 @@ const HomePage = () => {
                             <button
                                 key={cat}
                                 className={`filter-chip ${selectedCategory === cat ? 'active' : ''}`}
-                                onClick={() => setSelectedCategory(cat)}
+                                onClick={() => handleCategoryChange(cat)}
                             >
                                 {cat}
                             </button>

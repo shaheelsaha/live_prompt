@@ -2,7 +2,7 @@ export interface Prompt {
     id: string;
     slug?: string;
     category: string;
-    platform: string;
+    platform: string | string[];
     title: string;
     problem: string;
     before: string;

@@ -9,7 +9,7 @@ import type { Prompt } from '../types/Prompt';
 import {
     Plus, Save, Trash2, Edit3, X, Image, Upload, Eye,
     ArrowLeft, Sparkles, AlertTriangle, ShieldOff, Video, FileText,
-    Users, Crown, DollarSign, TrendingUp, Download, BarChart3
+    Users, Crown, DollarSign, TrendingUp, Download, BarChart3, Search
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { compressImage } from '../utils/imageCompression';
@@ -23,14 +23,14 @@ const CATEGORIES = [
 ];
 
 const PLATFORMS = [
-    'Midjourney', 'DALL-E', 'Sora', 'Veo', 'Nano banana',
-    'Runway', 'Stable Diffusion', 'ChatGPT', 'Claude', 'Other'
+    'Midjourney', 'Stable Diffusion', 'Grok', 'Sora',
+    'Runway', 'Nano banana', 'ChatGPT', 'Other'
 ];
 
 interface PromptForm {
     title: string;
     category: string;
-    platform: string;
+    platform: string[];
     problem: string;
     before: string;
     after: string;
@@ -52,7 +52,7 @@ interface PromptForm {
 }
 
 const emptyForm: PromptForm = {
-    title: '', category: CATEGORIES[0], platform: PLATFORMS[0],
+    title: '', category: CATEGORIES[0], platform: [PLATFORMS[0]],
     problem: '', before: '', after: '', fullPrompt: '', instructions: '',
     tutorialLink: '', price: 3, impressions: 0, likes: 0,
     promptType: 'image', beforeImage: '', beforeImageThumb: '', 
@@ -81,6 +81,8 @@ const AdminPage = () => {
     const [uploading, setUploading] = useState<'before' | 'after' | 'output' | 'tutorial' | null>(null);
     const [dashStats, setDashStats] = useState<DashboardStats | null>(null);
     const [statsLoading, setStatsLoading] = useState(false);
+    const [activeFilter, setActiveFilter] = useState<string | null>(null);
+    const [searchQuery, setSearchQuery] = useState('');
     const beforeFileRef = useRef<HTMLInputElement>(null);
     const afterFileRef = useRef<HTMLInputElement>(null);
     const outputFileRef = useRef<HTMLInputElement>(null);
@@ -130,6 +132,13 @@ const AdminPage = () => {
         return acc;
     }, {});
     const sortedCategories = Object.entries(categoryBreakdown).sort((a, b) => b[1] - a[1]);
+
+    // Filter prompts based on active category and search query
+    const filteredPrompts = prompts.filter(p => {
+        const matchesCategory = !activeFilter || p.category === activeFilter;
+        const matchesSearch = !searchQuery || p.title.toLowerCase().includes(searchQuery.toLowerCase()) || (p.problem || '').toLowerCase().includes(searchQuery.toLowerCase());
+        return matchesCategory && matchesSearch;
+    });
 
     // Upload file to Firebase Storage
     const handleFileUpload = async (file: File, type: 'before' | 'after' | 'output' | 'tutorial') => {
@@ -279,7 +288,7 @@ const AdminPage = () => {
         setForm({
             title: prompt.title,
             category: prompt.category,
-            platform: prompt.platform,
+            platform: Array.isArray(prompt.platform) ? prompt.platform : [prompt.platform],
             problem: prompt.problem,
             before: prompt.before || '',
             after: prompt.after || '',
@@ -472,22 +481,46 @@ const AdminPage = () => {
                     {sortedCategories.length > 0 && (
                         <div>
                             <h3 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                Prompts by Category
+                                Filter by Category
                             </h3>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                {/* All button */}
+                                <span
+                                    onClick={() => setActiveFilter(null)}
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: 6,
+                                        padding: '6px 12px',
+                                        background: !activeFilter ? 'rgba(168,85,247,0.2)' : 'rgba(255,255,255,0.04)',
+                                        border: !activeFilter ? '1px solid rgba(168,85,247,0.4)' : '1px solid rgba(255,255,255,0.08)',
+                                        borderRadius: 8,
+                                        fontSize: '0.8rem',
+                                        color: !activeFilter ? '#a855f7' : '#ccc',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s',
+                                        fontWeight: !activeFilter ? 700 : 400,
+                                    }}
+                                >
+                                    All <span style={{ background: 'rgba(168,85,247,0.15)', color: '#a855f7', padding: '2px 7px', borderRadius: 6, fontWeight: 700, fontSize: '0.75rem' }}>{prompts.length}</span>
+                                </span>
                                 {sortedCategories.map(([cat, count]) => (
                                     <span
                                         key={cat}
+                                        onClick={() => setActiveFilter(activeFilter === cat ? null : cat)}
                                         style={{
                                             display: 'inline-flex',
                                             alignItems: 'center',
                                             gap: 6,
                                             padding: '6px 12px',
-                                            background: 'rgba(255,255,255,0.04)',
-                                            border: '1px solid rgba(255,255,255,0.08)',
+                                            background: activeFilter === cat ? 'rgba(168,85,247,0.2)' : 'rgba(255,255,255,0.04)',
+                                            border: activeFilter === cat ? '1px solid rgba(168,85,247,0.4)' : '1px solid rgba(255,255,255,0.08)',
                                             borderRadius: 8,
                                             fontSize: '0.8rem',
-                                            color: '#ccc',
+                                            color: activeFilter === cat ? '#a855f7' : '#ccc',
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s',
+                                            fontWeight: activeFilter === cat ? 700 : 400,
                                         }}
                                     >
                                         {cat}
@@ -539,10 +572,26 @@ const AdminPage = () => {
                                     </select>
                                 </div>
                                 <div className="form-group">
-                                    <label className="form-label">AI Tool</label>
-                                    <select className="form-input" value={form.platform} onChange={e => setForm({ ...form, platform: e.target.value })}>
-                                        {PLATFORMS.map(p => <option key={p} value={p}>{p}</option>)}
-                                    </select>
+                                    <label className="form-label">AI Tools (multi-select)</label>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8 }}>
+                                        {PLATFORMS.filter(p => p !== 'Other').map(p => (
+                                            <label key={p} style={{
+                                                display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px',
+                                                background: form.platform.includes(p) ? 'rgba(168,85,247,0.2)' : 'rgba(255,255,255,0.04)',
+                                                border: form.platform.includes(p) ? '1px solid rgba(168,85,247,0.4)' : '1px solid rgba(255,255,255,0.08)',
+                                                borderRadius: 6, fontSize: '0.75rem', cursor: 'pointer', transition: 'all 0.2s',
+                                                color: form.platform.includes(p) ? '#a855f7' : '#ccc', fontWeight: form.platform.includes(p) ? 600 : 400,
+                                            }}>
+                                                <input type="checkbox" checked={form.platform.includes(p)} onChange={() => {
+                                                    const newPlatforms = form.platform.includes(p)
+                                                        ? form.platform.filter(x => x !== p)
+                                                        : [...form.platform, p];
+                                                    setForm({ ...form, platform: newPlatforms.length > 0 ? newPlatforms : [PLATFORMS[0]] });
+                                                }} style={{ display: 'none' }} />
+                                                {p}
+                                            </label>
+                                        ))}
+                                    </div>
                                 </div>
                                 <div className="form-group">
                                     <label className="form-label">Output Type</label>
@@ -675,47 +724,108 @@ const AdminPage = () => {
                     </div>
                 )}
 
-                {/* PROMPT LIST */}
+                {/* PROMPT CATALOG */}
                 <div className="admin-list">
-                    <h2 style={{ fontSize: '1.3rem', marginBottom: 16 }}>
-                        Your Prompts ({prompts.length})
-                    </h2>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+                        <h2 style={{ fontSize: '1.3rem', margin: 0 }}>
+                            {activeFilter ? `${activeFilter}` : 'All Prompts'} ({filteredPrompts.length})
+                        </h2>
+                        <div style={{ position: 'relative', minWidth: 220 }}>
+                            <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                            <input
+                                type="text"
+                                placeholder="Search prompts..."
+                                value={searchQuery}
+                                onChange={e => setSearchQuery(e.target.value)}
+                                style={{
+                                    width: '100%',
+                                    padding: '8px 12px 8px 32px',
+                                    background: 'rgba(255,255,255,0.04)',
+                                    border: '1px solid rgba(255,255,255,0.1)',
+                                    borderRadius: 8,
+                                    color: '#fff',
+                                    fontSize: '0.85rem',
+                                    outline: 'none',
+                                }}
+                            />
+                        </div>
+                    </div>
 
-                    {prompts.length === 0 ? (
+                    {filteredPrompts.length === 0 ? (
                         <div className="empty-state" style={{ padding: '48px 0' }}>
-                            <p className="text-muted">No prompts yet. Click "Add New Prompt" to get started!</p>
+                            <p className="text-muted">{prompts.length === 0 ? 'No prompts yet. Click "Add New Prompt" to get started!' : 'No prompts match your filter.'}</p>
                         </div>
                     ) : (
-                        prompts.map(prompt => (
-                            <div key={prompt.id} className="admin-prompt-row">
-                                <div className="admin-prompt-info">
-                                    <div className="flex gap-2 items-center" style={{ marginBottom: 6, flexWrap: 'wrap' }}>
-                                        <span className="tag">{prompt.category}</span>
-                                        <span className="tag tag-platform">{prompt.platform}</span>
-                                        <span className="tag" style={{
-                                            background: prompt.promptType === 'video' ? 'rgba(168,85,247,0.1)' : prompt.promptType === 'image' ? 'rgba(59,130,246,0.1)' : 'rgba(234,179,8,0.1)',
-                                            color: prompt.promptType === 'video' ? '#a855f7' : prompt.promptType === 'image' ? '#3b82f6' : '#eab308',
-                                        }}>
-                                            {prompt.promptType === 'video' ? <><Video size={10} /> Video</> : prompt.promptType === 'image' ? <><Image size={10} /> Image</> : <><FileText size={10} /> Text</>}
-                                        </span>
+                        <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                            gap: 14,
+                        }}>
+                            {filteredPrompts.map(prompt => {
+                                const thumb = prompt.outputMediaThumb || prompt.outputMedia || prompt.afterImageThumb || prompt.afterImage || '';
+                                return (
+                                    <div key={prompt.id} style={{
+                                        background: 'rgba(255,255,255,0.03)',
+                                        border: '1px solid rgba(255,255,255,0.07)',
+                                        borderRadius: 12,
+                                        overflow: 'hidden',
+                                        transition: 'border-color 0.2s, transform 0.2s',
+                                        cursor: 'pointer',
+                                    }}
+                                    onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'rgba(168,85,247,0.4)'; (e.currentTarget as HTMLDivElement).style.transform = 'translateY(-2px)'; }}
+                                    onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'rgba(255,255,255,0.07)'; (e.currentTarget as HTMLDivElement).style.transform = 'translateY(0)'; }}
+                                    >
+                                        {/* Thumbnail */}
+                                        <div style={{ aspectRatio: '4/3', overflow: 'hidden', background: '#111' }}>
+                                            {thumb ? (
+                                                prompt.outputMediaType === 'video' && (prompt.outputMedia === thumb) ? (
+                                                    <video src={thumb} muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                ) : (
+                                                    <img src={thumb} alt={prompt.title} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                )
+                                            ) : (
+                                                <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
+                                                    <Image size={32} />
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Info */}
+                                        <div style={{ padding: '10px 12px' }}>
+                                            <h4 style={{ fontSize: '0.82rem', fontWeight: 600, marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                {prompt.title}
+                                            </h4>
+                                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
+                                                {(Array.isArray(prompt.platform) ? prompt.platform : [prompt.platform]).map((plat: string) => (
+                                                    <span key={plat} style={{ fontSize: '0.6rem', padding: '2px 6px', borderRadius: 4, background: 'rgba(168,85,247,0.1)', color: '#a855f7' }}>{plat}</span>
+                                                ))}
+                                                <span style={{
+                                                    fontSize: '0.6rem', padding: '2px 6px', borderRadius: 4,
+                                                    background: prompt.promptType === 'video' ? 'rgba(168,85,247,0.1)' : 'rgba(59,130,246,0.1)',
+                                                    color: prompt.promptType === 'video' ? '#a855f7' : '#3b82f6',
+                                                }}>{prompt.promptType}</span>
+                                            </div>
+
+                                            {/* Actions */}
+                                            <div style={{ display: 'flex', gap: 4 }}>
+                                                <Link to={`/prompt/${prompt.slug || prompt.id}`}
+                                                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '5px 0', fontSize: '0.7rem', fontWeight: 600, borderRadius: 6, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#ccc', textDecoration: 'none' }}>
+                                                    <Eye size={11} /> View
+                                                </Link>
+                                                <button onClick={() => handleEdit(prompt)}
+                                                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '5px 0', fontSize: '0.7rem', fontWeight: 600, borderRadius: 6, background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)', color: '#3b82f6', cursor: 'pointer' }}>
+                                                    <Edit3 size={11} /> Edit
+                                                </button>
+                                                <button onClick={() => handleDelete(prompt.id)}
+                                                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '5px 8px', fontSize: '0.7rem', borderRadius: 6, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: '#ef4444', cursor: 'pointer' }}>
+                                                    <Trash2 size={11} />
+                                                </button>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <h3 style={{ fontSize: '1.05rem', fontWeight: 600 }}>{prompt.title}</h3>
-                                    <p className="text-muted" style={{ fontSize: '0.85rem', marginTop: 4 }}>{prompt.problem}</p>
-                                </div>
-                                <div className="admin-prompt-actions">
-                                    <Link to={`/prompt/${prompt.slug || prompt.id}`} className="btn btn-outline btn-sm">
-                                        <Eye size={14} /> View
-                                    </Link>
-                                    <button className="btn btn-outline btn-sm" onClick={() => handleEdit(prompt)}>
-                                        <Edit3 size={14} /> Edit
-                                    </button>
-                                    <button className="btn btn-outline btn-sm" onClick={() => handleDelete(prompt.id)}
-                                        style={{ borderColor: 'rgba(239,68,68,0.3)', color: '#ef4444' }}>
-                                        <Trash2 size={14} /> Delete
-                                    </button>
-                                </div>
-                            </div>
-                        ))
+                                );
+                            })}
+                        </div>
                     )}
                 </div>
             </div>

@@ -251,8 +251,8 @@ exports.addPromptFromShortcut = onRequest(
           
           // ── Fuzzy Matching for Platform and Category ──
           const PLATFORMS = [
-            "Midjourney", "DALL-E", "Sora", "Veo", "Nano banana",
-            "Runway", "Stable Diffusion", "ChatGPT", "Claude", "Other"
+            "Midjourney", "Stable Diffusion", "Grok", "Sora",
+            "Runway", "Nano banana", "ChatGPT", "Other"
           ];
           
           const CATEGORIES = [
@@ -277,6 +277,12 @@ exports.addPromptFromShortcut = onRequest(
 
           const platform = fuzzyMatch(fields.platform, PLATFORMS, "Midjourney");
           const category = fuzzyMatch(fields.category, CATEGORIES, "Product & E-commerce");
+
+          // Support multi-platform: "Midjourney, Grok" → ["Midjourney", "Grok"]
+          const rawPlatforms = (fields.platform || "Midjourney").split(",").map(s => s.trim()).filter(Boolean);
+          const platformArray = rawPlatforms.map(p => fuzzyMatch(p, PLATFORMS, p));
+          // Store as array (even if single) for consistency
+          const platformField = platformArray.length === 1 ? platformArray[0] : platformArray;
 
           // Upload preview image (from "media" field)
           const media = await uploadFile(files.media, "media");
@@ -357,7 +363,7 @@ exports.addPromptFromShortcut = onRequest(
           const docData = {
             title,
             problem: description,
-            platform,
+            platform: platformField,
             category,
             slug,
             promptType: media.type || "image",
