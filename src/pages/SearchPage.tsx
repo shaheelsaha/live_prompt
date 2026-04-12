@@ -33,8 +33,10 @@ const SearchPage = () => {
             setSearchQuery(q);
             performSearch(q);
         } else {
-            // If no search query, redirect to home
-            navigate('/');
+            // If no search query, stay on the page and clear results
+            setSearchQuery('');
+            setVectorResults(null);
+            setHasAttemptedSearch(false);
         }
     }, [searchParams]);
 
