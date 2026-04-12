@@ -4,6 +4,7 @@ const Busboy = require("busboy");
 const { v4: uuidv4 } = require("uuid");
 const path = require("path");
 const { validateEvent, WebhookVerificationError } = require("@polar-sh/sdk/webhooks");
+const { OpenAI } = require("openai");
 
 admin.initializeApp();
 
@@ -119,6 +120,17 @@ exports.publishPrompt = onRequest(
           isPremium: false,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
+
+        // Generate AI embedding for vector search
+        try {
+          const embText = (description || title).substring(0, 8000);
+          const oai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+          const embRes = await oai.embeddings.create({ model: "text-embedding-3-small", input: embText, dimensions: 1536 });
+          await docRef.update({ embedding: admin.firestore.FieldValue.vector(embRes.data[0].embedding) });
+          console.log(`[publishPrompt] Embedding generated for ${docRef.id}`);
+        } catch (embErr) {
+          console.warn(`[publishPrompt] Embedding failed (non-fatal): ${embErr.message}`);
+        }
 
         // Write prompt text to private subcollection
         if (prompt) {
@@ -388,6 +400,17 @@ exports.addPromptFromShortcut = onRequest(
               fullPrompt: promptText,
             });
           }
+          // Generate AI embedding for vector search
+          try {
+            const embText = (description || title).substring(0, 8000);
+            const oai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+            const embRes = await oai.embeddings.create({ model: "text-embedding-3-small", input: embText, dimensions: 1536 });
+            await docRef.update({ embedding: admin.firestore.FieldValue.vector(embRes.data[0].embedding) });
+            console.log(`[Action - create] Embedding generated for ${docRef.id}`);
+          } catch (embErr) {
+            console.warn(`[Action - create] Embedding failed (non-fatal): ${embErr.message}`);
+          }
+
           console.log(`[Action - create] Success! Created prompt ${docRef.id}`);
 
           return res.status(200).json({
@@ -545,8 +568,8 @@ exports.createPolarCheckout = onRequest(
         return res.status(500).json({ error: "Server configuration error" });
       }
 
-      // Use sandbox API for now
-      const polarApiBase = "https://sandbox-api.polar.sh";
+      // Using the live Polar production API endpoint
+      const polarApiBase = "https://api.polar.sh";
 
       const checkoutPayload = {
         product_id: price_id, // User provided Product IDs, which Polar API accepts directly
@@ -624,7 +647,8 @@ exports.createCreditCheckout = onRequest(
         return res.status(500).json({ error: "Server configuration error" });
       }
 
-      const polarApiBase = "https://sandbox-api.polar.sh";
+      // Using the live Polar production API endpoint
+      const polarApiBase = "https://api.polar.sh";
 
       const checkoutPayload = {
         product_id: packInfo.productId,
@@ -1293,7 +1317,8 @@ exports.createPolarPortalSession = onRequest(
         return res.status(500).json({ error: "Server configuration error" });
       }
 
-      const polarApiBase = "https://sandbox-api.polar.sh";
+      // Using the live Polar production API endpoint
+      const polarApiBase = "https://api.polar.sh";
 
       // Try to get customerId from Firestore
       const userDoc = await db.collection("users").doc(firebase_uid).get();
@@ -1489,6 +1514,164 @@ exports.getAdminDashboardStats = onRequest(
     } catch (err) {
       console.error("getAdminDashboardStats error:", err);
       return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+//  publicVectorSearch — bypasses extension auth requirement
+//  Takes a search query, uses OpenAI embeddings, and finds
+//  the nearest neighbors using Firestore vector search.
+// ═══════════════════════════════════════════════════════════
+exports.publicVectorSearch = onRequest(
+  { cors: true, maxInstances: 10, region: "us-central1" },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Method not allowed" });
+    }
+
+    try {
+      const { query, limit = 100 } = req.body.data; // Callable functions pass payload inside 'data'
+
+      if (!query || typeof query !== "string") {
+        return res.status(200).json({ data: [] });
+      }
+
+      const openaiParams = {
+          apiKey: process.env.OPENAI_API_KEY
+      };
+      const openai = new OpenAI(openaiParams);
+
+      // 1. Generate the embedding for the search string
+      const embeddingRes = await openai.embeddings.create({
+        model: "text-embedding-3-small",
+        input: query,
+        dimensions: 1536,
+      });
+
+      const vectorArray = embeddingRes.data[0].embedding;
+
+      // Ensure limit is reasonable (max 100)
+      const fetchLimit = Math.min(Math.max(1, limit), 100);
+
+      // 2. Perform vector search in Firestore
+      const vectorValue = admin.firestore.FieldValue.vector(vectorArray);
+      
+      const snapshot = await db.collection("prompts")
+        .findNearest("embedding", vectorValue, {
+          limit: fetchLimit,
+          distanceMeasure: "COSINE"
+        })
+        .get();
+
+      // 3. Return the exact matching documents
+      const results = [];
+      snapshot.forEach(doc => {
+        const docData = doc.data();
+        // Remove the huge embedding array so we don't send it over the network
+        delete docData.embedding;
+        results.push({ id: doc.id, ...docData });
+      });
+
+      // Firebase Callable functions expect response to be wrapped in an object containing 'data'
+      return res.status(200).json({ data: results });
+
+    } catch (err) {
+      console.error("publicVectorSearch error:", err);
+      // Fallback: return empty array if vector search fails
+      return res.status(200).json({ data: [], error: err.message });
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+//  backfillEmbeddings — one-time admin function to generate
+//  embeddings for all existing prompts that don't have one.
+//  Call via: POST https://us-central1-prompt-factory-952f9.cloudfunctions.net/backfillEmbeddings
+//  with body: { "data": { "secret": "<API_SECRET>" } }
+// ═══════════════════════════════════════════════════════════
+exports.backfillEmbeddings = onRequest(
+  { cors: true, maxInstances: 1, region: "us-central1", timeoutSeconds: 540 },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Method not allowed" });
+    }
+
+    // Require admin secret to prevent abuse
+    const secret = req.body?.data?.secret || req.body?.secret;
+    if (secret !== API_SECRET) {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    try {
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+      const snapshot = await db.collection("prompts").get();
+      console.log(`Backfill: Found ${snapshot.size} total prompts`);
+
+      let processed = 0;
+      let skipped = 0;
+      let errors = 0;
+
+      const docs = [];
+      snapshot.forEach(d => docs.push(d));
+
+      // Process in batches of 20
+      for (let i = 0; i < docs.length; i += 20) {
+        const batch = docs.slice(i, i + 20);
+
+        const promises = batch.map(async (docSnap) => {
+          const data = docSnap.data();
+
+          // Skip if already has an embedding
+          if (data.embedding && Array.isArray(data.embedding) && data.embedding.length > 100) {
+            skipped++;
+            return;
+          }
+
+          const text = data.problem || data.input || data.title || "";
+          if (!text) {
+            skipped++;
+            return;
+          }
+
+          try {
+            const embeddingRes = await openai.embeddings.create({
+              model: "text-embedding-3-small",
+              input: text.substring(0, 8000),
+              dimensions: 1536,
+            });
+
+            const vectorArray = embeddingRes.data[0].embedding;
+            const vectorValue = admin.firestore.FieldValue.vector(vectorArray);
+
+            await db.collection("prompts").doc(docSnap.id).update({
+              embedding: vectorValue,
+            });
+
+            processed++;
+          } catch (err) {
+            errors++;
+            console.error(`Backfill error on ${docSnap.id}: ${err.message}`);
+          }
+        });
+
+        await Promise.all(promises);
+
+        // Small delay between batches
+        if (i + 20 < docs.length) {
+          await new Promise(r => setTimeout(r, 300));
+        }
+      }
+
+      console.log(`Backfill complete: processed=${processed}, skipped=${skipped}, errors=${errors}`);
+      return res.status(200).json({
+        data: { processed, skipped, errors, total: docs.length }
+      });
+
+    } catch (err) {
+      console.error("backfillEmbeddings error:", err);
+      return res.status(500).json({ error: err.message });
     }
   }
 );

@@ -14,10 +14,11 @@ const PricingPage = () => {
     const [upgrading, setUpgrading] = useState(false);
     const [buyingPack, setBuyingPack] = useState<string | null>(null);
 
-    const monthlyPrice = 12;
-    const yearlyPrice = 96;
-    const yearlyMonthly = Math.round(yearlyPrice / 12); // $8
-    const savingsPercent = Math.round((1 - yearlyPrice / (monthlyPrice * 12)) * 100); // 33%
+    const monthlyPrice = 15;
+    const yearlyPrice = 99;
+    // We use toFixed(2) because 99/12 is 8.25 instead of a clean whole number.
+    const yearlyMonthly = (yearlyPrice / 12).toFixed(2); 
+    const savingsPercent = Math.round((1 - yearlyPrice / (monthlyPrice * 12)) * 100); // 45%
 
     const handleUpgrade = async () => {
         if (!user) {

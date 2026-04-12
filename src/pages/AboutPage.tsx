@@ -6,7 +6,7 @@ const AboutPage = () => {
             <div className="container">
                 <div className="text-center" style={{ marginBottom: 64 }}>
                     <h1 style={{ fontSize: '3rem', marginBottom: '16px' }}>
-                        About <span className="text-gradient">Prompt Factory</span>
+                        About <span className="text-gradient">LivePrompt</span>
                     </h1>
                     <p className="text-muted" style={{ fontSize: '1.15rem', maxWidth: 600, margin: '0 auto' }}>
                         We are not another AI tool. We are a curated library of proven viral frameworks,
@@ -55,7 +55,7 @@ const AboutPage = () => {
                     <h2 style={{ fontSize: '2rem', marginBottom: 16 }}>Our Mission</h2>
                     <p className="text-muted" style={{ fontSize: '1.1rem', lineHeight: 1.7, maxWidth: 700, margin: '0 auto' }}>
                         We believe the difference between a post that dies in the feed and one that goes viral
-                        is not luck — it is a framework. Prompt Factory exists to give founders, marketers,
+                        is not luck — it is a framework. LivePrompt exists to give founders, marketers,
                         and creators access to the exact frameworks that consistently drive engagement.
                         We are selling better outcomes, not just text prompts.
                     </p>

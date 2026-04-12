@@ -75,7 +75,7 @@ const LoginPage = () => {
                 <div className="auth-box">
                     <Link to="/" className="flex items-center gap-2 mb-4" style={{ textDecoration: 'none', color: 'inherit' }}>
                         <Sparkles style={{ color: 'var(--accent-neon)' }} size={28} />
-                        <span className="logo" style={{ fontSize: '1.6rem' }}>Prompt Factory</span>
+                        <span className="logo" style={{ fontSize: '1.6rem' }}>LivePrompt</span>
                     </Link>
 
                     <h1>Welcome Back</h1>

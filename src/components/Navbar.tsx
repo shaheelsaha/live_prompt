@@ -29,7 +29,7 @@ const Navbar = () => {
                 {/* Logo */}
                 <Link to="/" className="flex items-center gap-2" style={{ textDecoration: 'none', color: 'inherit' }}>
                     <Sparkles style={{ color: 'var(--accent-neon)' }} size={24} />
-                    <span className="logo">Prompt Factory</span>
+                    <span className="logo">LivePrompt</span>
                 </Link>
 
                 {/* Desktop Nav */}

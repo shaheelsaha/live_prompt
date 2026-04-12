@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { collection, getDocs, query, orderBy, limit, where } from 'firebase/firestore';
+import { useNavigate } from 'react-router-dom';
+import { collection, getDocs, query, orderBy, limit, where, getCountFromServer } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import Hero from '../components/Hero';
 import SearchBar from '../components/SearchBar';
 import PromptCard from '../components/PromptCard';
 import type { Prompt } from '../types/Prompt';
-import { TrendingUp, Filter, Layers } from 'lucide-react';
+import { Filter, Layers } from 'lucide-react';
 
 const HOMEPAGE_LIMIT = 200; // Max prompts for the default "All" view
 
@@ -23,19 +23,16 @@ const shuffleArray = (array: any[]) => {
 };
 
 const HomePage = () => {
+    const navigate = useNavigate();
     const [allPrompts, setAllPrompts] = useState<Prompt[]>([]);
     const [categoryNames, setCategoryNames] = useState<string[]>([]);
+    const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
+    const [totalCount, setTotalCount] = useState<number>(0);
     const [visibleCount, setVisibleCount] = useState(30);
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedPlatform, setSelectedPlatform] = useState('All');
     const [selectedCategory, setSelectedCategory] = useState('All');
     const [loading, setLoading] = useState(true);
-    const [searchParams] = useSearchParams();
-
-    useEffect(() => {
-        const q = searchParams.get('q');
-        if (q) setSearchQuery(q);
-    }, [searchParams]);
 
     // Initial load: top 200 prompts + extract all unique category names
     useEffect(() => {
@@ -54,8 +51,29 @@ const HomePage = () => {
                     setAllPrompts(shuffleArray(firestorePrompts));
 
                     // Extract unique categories from loaded data
-                    const cats = Array.from(new Set(firestorePrompts.map(p => p.category).filter(Boolean))).sort();
-                    setCategoryNames(cats);
+                    const cats = Array.from(new Set(firestorePrompts.map(p => p.category).filter(Boolean)));
+
+                    // Fetch total count
+                    const totalSnapshot = await getCountFromServer(collection(db, 'prompts'));
+                    setTotalCount(totalSnapshot.data().count);
+                    
+                    // Fetch counts for each category
+                    const counts: Record<string, number> = {};
+                    await Promise.all(cats.map(async (cat) => {
+                        const catQuery = query(collection(db, 'prompts'), where('category', '==', cat));
+                        const countSnap = await getCountFromServer(catQuery);
+                        counts[cat] = countSnap.data().count;
+                    }));
+                    setCategoryCounts(counts);
+
+                    // Sort categories by count (high to low), then by name as a fallback
+                    const sortedCats = cats.sort((a, b) => {
+                        const countA = counts[a] || 0;
+                        const countB = counts[b] || 0;
+                        if (countB !== countA) return countB - countA;
+                        return a.localeCompare(b);
+                    });
+                    setCategoryNames(sortedCats);
                 }
             } catch (err) {
                 console.log('Could not fetch prompts:', err);
@@ -131,6 +149,11 @@ const HomePage = () => {
         setVisibleCount(prev => prev + 30);
     };
 
+    const handleSearchNavigate = (searchText: string) => {
+        if (!searchText.trim()) return;
+        navigate(`/search?q=${encodeURIComponent(searchText)}`);
+    };
+
     // Helper: normalize platform field (string or string[]) to string[]
     const getPlatforms = (p: any): string[] => {
         if (Array.isArray(p)) return p;
@@ -140,18 +163,10 @@ const HomePage = () => {
 
     const filteredPrompts = allPrompts.filter((p) => {
         const plats = getPlatforms(p.platform);
-        const platString = plats.join(' ').toLowerCase();
-
-        const matchesSearch = searchQuery === '' ||
-            p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            p.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            platString.includes(searchQuery.toLowerCase()) ||
-            p.problem.toLowerCase().includes(searchQuery.toLowerCase());
-
         const matchesPlatform = selectedPlatform === 'All' || plats.includes(selectedPlatform);
         const matchesCategory = selectedCategory === 'All' || p.category === selectedCategory;
 
-        return matchesSearch && matchesPlatform && matchesCategory;
+        return matchesPlatform && matchesCategory;
     });
 
     const visibleFilteredPrompts = filteredPrompts.slice(0, visibleCount);
@@ -171,7 +186,13 @@ const HomePage = () => {
             <section className="container" id="prompt-grid">
                 {/* Search + Filter */}
                 <div className="search-filter-row">
-                    <SearchBar value={searchQuery} onChange={setSearchQuery} />
+                    <SearchBar
+                        value={searchQuery}
+                        onChange={setSearchQuery}
+                        onSearch={handleSearchNavigate}
+                        isSearching={false}
+                        placeholder="Search prompts with AI... (press Enter)"
+                    />
                 </div>
 
                 {/* Category Filter */}
@@ -184,7 +205,9 @@ const HomePage = () => {
                                 className={`filter-chip ${selectedCategory === cat ? 'active' : ''}`}
                                 onClick={() => handleCategoryChange(cat)}
                             >
-                                {cat}
+                                {cat} 
+                                {cat === 'All' && totalCount > 0 && <span style={{ opacity: 0.7, marginLeft: '4px', fontSize: '0.85em' }}>({totalCount})</span>}
+                                {cat !== 'All' && categoryCounts[cat] !== undefined && <span style={{ opacity: 0.7, marginLeft: '4px', fontSize: '0.85em' }}>({categoryCounts[cat]})</span>}
                             </button>
                         ))}
                     </div>
@@ -209,11 +232,14 @@ const HomePage = () => {
                 {/* Section Header */}
                 <div className="flex justify-between items-center mb-8 mt-4">
                     <h2 style={{ fontSize: '1.5rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <TrendingUp size={22} style={{ color: 'var(--accent-neon)' }} />
-                        {searchQuery ? `Results for "${searchQuery}"` : selectedCategory !== 'All' ? selectedCategory : 'Trending Prompts'}
+                        {selectedCategory !== 'All' ? (
+                            <>{selectedCategory}</>
+                        ) : (
+                            <>Prompts</>
+                        )}
                     </h2>
                     <span className="text-muted" style={{ fontSize: '0.9rem' }}>
-                        {filteredPrompts.length} prompt{filteredPrompts.length !== 1 ? 's' : ''}
+                        {selectedCategory === 'All' ? totalCount : categoryCounts[selectedCategory] || filteredPrompts.length} prompts
                     </span>
                 </div>
 
@@ -223,13 +249,28 @@ const HomePage = () => {
                         <p className="text-muted mt-4">Loading prompts...</p>
                     </div>
                 ) : filteredPrompts.length > 0 ? (
-                    (searchQuery || selectedPlatform !== 'All' || selectedCategory !== 'All') ? (
-                        /* Static grid when filtering/searching */
-                        <div className="grid">
-                            {visibleFilteredPrompts.map((prompt) => (
-                                <PromptCard key={prompt.id} prompt={prompt} />
-                            ))}
-                        </div>
+                    (selectedPlatform !== 'All' || selectedCategory !== 'All') ? (
+                        /* Static grid when filtering locally */
+                        <>
+                            <div className="grid">
+                                {visibleFilteredPrompts.map((prompt) => (
+                                    <PromptCard key={prompt.id} prompt={prompt} />
+                                ))}
+                            </div>
+                            
+                            {/* Load More Button for Grid Mode */}
+                            {hasMoreToLoad && (
+                                <div className="flex justify-center mt-12 mb-8">
+                                    <button 
+                                        className="btn btn-outline" 
+                                        onClick={loadMore} 
+                                        style={{ padding: '12px 32px' }}
+                                    >
+                                        Load More Prompts
+                                    </button>
+                                </div>
+                            )}
+                        </>
                     ) : (
                         /* Floating marquee for default view */
                         <>

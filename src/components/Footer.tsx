@@ -15,7 +15,7 @@ const Footer = () => {
                     <div className="footer-brand">
                         <div className="flex items-center gap-2 mb-4">
                             <Sparkles style={{ color: 'var(--accent-neon)' }} size={20} />
-                            <span className="logo" style={{ fontSize: '1.2rem' }}>Prompt Factory</span>
+                            <span className="logo" style={{ fontSize: '1.2rem' }}>LivePrompt</span>
                         </div>
                         <p className="text-muted" style={{ fontSize: '0.9rem', lineHeight: 1.6 }}>
                             Curated viral prompts for creators and founders who want engagement and growth.
@@ -47,7 +47,7 @@ const Footer = () => {
 
                 <div className="footer-bottom">
                     <p className="text-muted" style={{ fontSize: '0.85rem' }}>
-                        © {new Date().getFullYear()} Prompt Factory. All rights reserved.
+                        © {new Date().getFullYear()} LivePrompt. All rights reserved.
                     </p>
                 </div>
             </div>
