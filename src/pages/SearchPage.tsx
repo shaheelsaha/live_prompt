@@ -17,6 +17,7 @@ const SearchPage = () => {
     // Core search state
     const [searchQuery, setSearchQuery] = useState('');
     const [isSearching, setIsSearching] = useState(false);
+    const [isLoadingDefaults, setIsLoadingDefaults] = useState(true);
     const [vectorResults, setVectorResults] = useState<Prompt[] | null>(null);
     const [defaultPrompts, setDefaultPrompts] = useState<Prompt[]>([]);
     const [hasAttemptedSearch, setHasAttemptedSearch] = useState(false);
@@ -74,6 +75,8 @@ const SearchPage = () => {
                 }
             } catch (err) {
                 console.log('Could not fetch default prompts:', err);
+            } finally {
+                setIsLoadingDefaults(false);
             }
         };
         fetchDefaults();
@@ -98,6 +101,7 @@ const SearchPage = () => {
         if (hasAttemptedSearch || selectedCategory === 'All') return;
         
         const fetchCategoryPrompts = async () => {
+            setIsLoadingDefaults(true);
             try {
                 const q = query(
                     collection(db, 'prompts'),
@@ -115,6 +119,8 @@ const SearchPage = () => {
                 setVisibleCount(30);
             } catch (err) {
                 console.log('Could not fetch category prompts:', err);
+            } finally {
+                setIsLoadingDefaults(false);
             }
         };
         fetchCategoryPrompts();
@@ -124,13 +130,18 @@ const SearchPage = () => {
     const handleCategoryChange = (cat: string) => {
         if (cat === 'All' && selectedCategory !== 'All' && !hasAttemptedSearch) {
             const fetchDefault = async () => {
-                const q = query(collection(db, 'prompts'), orderBy('impressions', 'desc'), limit(100));
-                const snapshot = await getDocs(q);
-                if (!snapshot.empty) {
-                    const firestorePrompts = snapshot.docs.map(doc => ({
-                        id: doc.id, ...doc.data(),
-                    })) as Prompt[];
-                    setDefaultPrompts(firestorePrompts);
+                setIsLoadingDefaults(true);
+                try {
+                    const q = query(collection(db, 'prompts'), orderBy('impressions', 'desc'), limit(100));
+                    const snapshot = await getDocs(q);
+                    if (!snapshot.empty) {
+                        const firestorePrompts = snapshot.docs.map(doc => ({
+                            id: doc.id, ...doc.data(),
+                        })) as Prompt[];
+                        setDefaultPrompts(firestorePrompts);
+                    }
+                } finally {
+                    setIsLoadingDefaults(false);
                 }
             };
             fetchDefault();
@@ -247,11 +258,11 @@ const SearchPage = () => {
                     </div>
                 </div>
 
-                {/* State: Searching */}
-                {isSearching ? (
+                {/* State: Searching or Loading initial prompts */}
+                {isSearching || (isLoadingDefaults && !hasAttemptedSearch) ? (
                     <div className="empty-state mt-16">
                         <div className="loading-spinner"></div>
-                        <p className="text-muted mt-4">Searching with AI...</p>
+                        <p className="text-muted mt-4">{isSearching ? 'Searching with AI...' : 'Loading prompts...'}</p>
                     </div>
                 ) : 
                 
