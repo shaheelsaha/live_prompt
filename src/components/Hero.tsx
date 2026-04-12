@@ -1,10 +1,9 @@
+import { useNavigate } from 'react-router-dom';
 import { Rocket } from 'lucide-react';
 import TrustStats from './TrustStats';
 
 const Hero = () => {
-    const scrollToPrompts = () => {
-        document.getElementById('prompt-grid')?.scrollIntoView({ behavior: 'smooth' });
-    };
+    const navigate = useNavigate();
 
     return (
         <header className="hero">
@@ -22,7 +21,7 @@ const Hero = () => {
                     Copy, paste, and create stunning AI content in seconds.
                 </p>
                 <div className="flex justify-center gap-4">
-                    <button className="btn btn-primary btn-lg" onClick={scrollToPrompts}>
+                    <button className="btn btn-primary btn-lg" onClick={() => navigate('/search')}>
                         Explore Prompts →
                     </button>
                     <a href="/about" className="btn btn-outline btn-lg" style={{ textDecoration: 'none' }}>
