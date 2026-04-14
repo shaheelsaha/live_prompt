@@ -42,6 +42,10 @@ const Footer = () => {
                             <a href="#" className="social-link"><Linkedin size={18} /></a>
                             <a href="#" className="social-link"><Instagram size={18} /></a>
                         </div>
+                        <div style={{ marginTop: 20 }}>
+                            <Link to="/privacy" className="footer-link">Privacy Policy</Link>
+                            <Link to="/terms" className="footer-link">Terms of Service</Link>
+                        </div>
                     </div>
                 </div>
 
