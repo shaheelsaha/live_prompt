@@ -14,6 +14,7 @@ import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import PrivacyPage from './pages/PrivacyPage';
 import TermsPage from './pages/TermsPage';
+import CookieConsent from './components/CookieConsent';
 
 function App() {
   return (
@@ -38,6 +39,7 @@ function App() {
             </Routes>
           </main>
           <Footer />
+          <CookieConsent />
         </div>
       </Router>
     </AuthProvider>
