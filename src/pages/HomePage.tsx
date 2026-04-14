@@ -172,11 +172,16 @@ const HomePage = () => {
     const visibleFilteredPrompts = filteredPrompts.slice(0, visibleCount);
     const hasMoreToLoad = visibleCount < filteredPrompts.length;
 
-    // Split prompts into 3 distinct chunks for the 3 marquee rows
-    const rowCapacity = Math.ceil(visibleFilteredPrompts.length / 3);
-    const row1Prompts = visibleFilteredPrompts.slice(0, rowCapacity);
-    const row2Prompts = visibleFilteredPrompts.slice(rowCapacity, rowCapacity * 2);
-    const row3Prompts = visibleFilteredPrompts.slice(rowCapacity * 2);
+    // Chunk visible prompts into blocks of 30, so each "Load More" adds a new 3-row cluster
+    const chunkArray = (array: Prompt[], size: number) => {
+        const result = [];
+        for (let i = 0; i < array.length; i += size) {
+            result.push(array.slice(i, i + size));
+        }
+        return result;
+    };
+    
+    const visiblePromptsChunks = chunkArray(visibleFilteredPrompts, 30);
 
 
     return (
@@ -274,38 +279,47 @@ const HomePage = () => {
                     ) : (
                         /* Floating marquee for default view */
                         <>
-                            <div className="prompt-marquee-section">
-                                {/* Row 1 — scrolls left */}
-                                <div className="prompt-marquee-track">
-                                    <div className="prompt-marquee-slide">
-                                        {[...row1Prompts, ...row1Prompts].map((prompt, i) => (
-                                            <div className="prompt-marquee-card" key={`r1-${prompt.id}-${i}`}>
-                                                <PromptCard prompt={prompt} />
+                            {visiblePromptsChunks.map((chunk, chunkIndex) => {
+                                const rowCapacity = Math.ceil(chunk.length / 3);
+                                const row1Prompts = chunk.slice(0, rowCapacity);
+                                const row2Prompts = chunk.slice(rowCapacity, rowCapacity * 2);
+                                const row3Prompts = chunk.slice(rowCapacity * 2);
+
+                                return (
+                                    <div className="prompt-marquee-section" key={`chunk-${chunkIndex}`} style={{ paddingTop: chunkIndex > 0 ? '40px' : '0' }}>
+                                        {/* Row 1 — scrolls left */}
+                                        <div className="prompt-marquee-track">
+                                            <div className="prompt-marquee-slide">
+                                                {[...row1Prompts, ...row1Prompts].map((prompt, i) => (
+                                                    <div className="prompt-marquee-card" key={`r1-${chunkIndex}-${prompt.id}-${i}`}>
+                                                        <PromptCard prompt={prompt} />
+                                                    </div>
+                                                ))}
                                             </div>
-                                        ))}
-                                    </div>
-                                </div>
-                                {/* Row 2 — scrolls right (reverse) */}
-                                <div className="prompt-marquee-track reverse">
-                                    <div className="prompt-marquee-slide">
-                                        {[...row2Prompts, ...row2Prompts].map((prompt, i) => (
-                                            <div className="prompt-marquee-card" key={`r2-${prompt.id}-${i}`}>
-                                                <PromptCard prompt={prompt} />
+                                        </div>
+                                        {/* Row 2 — scrolls right (reverse) */}
+                                        <div className="prompt-marquee-track reverse">
+                                            <div className="prompt-marquee-slide">
+                                                {[...row2Prompts, ...row2Prompts].map((prompt, i) => (
+                                                    <div className="prompt-marquee-card" key={`r2-${chunkIndex}-${prompt.id}-${i}`}>
+                                                        <PromptCard prompt={prompt} />
+                                                    </div>
+                                                ))}
                                             </div>
-                                        ))}
-                                    </div>
-                                </div>
-                                {/* Row 3 — scrolls left (slower) */}
-                                <div className="prompt-marquee-track slow">
-                                    <div className="prompt-marquee-slide">
-                                        {[...row3Prompts, ...row3Prompts].map((prompt, i) => (
-                                            <div className="prompt-marquee-card" key={`r3-${prompt.id}-${i}`}>
-                                                <PromptCard prompt={prompt} />
+                                        </div>
+                                        {/* Row 3 — scrolls left (slower) */}
+                                        <div className="prompt-marquee-track slow">
+                                            <div className="prompt-marquee-slide">
+                                                {[...row3Prompts, ...row3Prompts].map((prompt, i) => (
+                                                    <div className="prompt-marquee-card" key={`r3-${chunkIndex}-${prompt.id}-${i}`}>
+                                                        <PromptCard prompt={prompt} />
+                                                    </div>
+                                                ))}
                                             </div>
-                                        ))}
+                                        </div>
                                     </div>
-                                </div>
-                            </div>
+                                );
+                            })}
 
                             {/* Load More Button */}
                             {hasMoreToLoad && (

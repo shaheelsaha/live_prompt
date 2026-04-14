@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { auth, googleProvider, db } from '../firebase/config';
+import posthog from 'posthog-js';
 
 export type UserTier = 'free' | 'pro_monthly' | 'pro_yearly';
 
@@ -75,6 +76,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 const userSnap = await getDoc(userRef);
 
                 if (!userSnap.exists()) {
+                    posthog.capture('user_signed_up', {
+                        method: isPasswordAuth ? 'email' : 'google'
+                    });
+                    
                     // Brand new user — gets 'free' tier
                     const newTier: UserTier = 'free';
                     await setDoc(userRef, {
@@ -106,10 +111,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 });
                 
                 setUser(currentUser);
+                posthog.identify(currentUser.uid, {
+                    email: currentUser.email,
+                    name: currentUser.displayName,
+                });
             } else {
                 setUser(null);
                 setTier('free');
                 setSubscriptionData(null);
+                posthog.reset();
             }
 
             setLoading(false);
