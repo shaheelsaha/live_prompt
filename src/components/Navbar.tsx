@@ -36,6 +36,7 @@ const Navbar = () => {
                 {/* Desktop Nav */}
                 <div className="nav-links">
                     <Link to="/" className="nav-link">Home</Link>
+                    <Link to="/search" className="nav-link">Prompts</Link>
                     <Link to="/pricing" className="nav-link">Pricing</Link>
                     <Link to="/about" className="nav-link">About</Link>
                     <Link to="/contact" className="nav-link">Contact</Link>
@@ -108,6 +109,7 @@ const Navbar = () => {
             {mobileOpen && (
                 <div className="mobile-menu">
                     <Link to="/" className="nav-link" onClick={() => setMobileOpen(false)}>Home</Link>
+                    <Link to="/search" className="nav-link" onClick={() => setMobileOpen(false)}>Prompts</Link>
                     <Link to="/pricing" className="nav-link" onClick={() => setMobileOpen(false)}>Pricing</Link>
                     <Link to="/about" className="nav-link" onClick={() => setMobileOpen(false)}>About</Link>
                     <Link to="/contact" className="nav-link" onClick={() => setMobileOpen(false)}>Contact</Link>
