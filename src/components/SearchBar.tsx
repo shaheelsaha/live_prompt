@@ -28,12 +28,14 @@ const SearchBar = ({ value, onChange, onSearch, isSearching = false, placeholder
             />
             {isSearching && (
                 <div className="search-loading-indicator" style={{
+                    position: 'absolute',
+                    right: value ? '70px' : '16px',
                     width: 18, height: 18,
                     border: '2px solid rgba(255,255,255,0.1)',
                     borderTopColor: 'var(--accent-neon)',
                     borderRadius: '50%',
                     animation: 'spin 0.6s linear infinite',
-                    marginRight: 8,
+                    zIndex: 2
                 }} />
             )}
             {value && (
