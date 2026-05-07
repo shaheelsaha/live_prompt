@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Sparkles, Twitter, Linkedin, Instagram } from 'lucide-react';
+import { Twitter, Linkedin, Instagram } from 'lucide-react';
+import logoImg from '../assets/logo.png';
 
 const Footer = () => {
     const location = useLocation();
@@ -14,7 +15,7 @@ const Footer = () => {
                     {/* Brand */}
                     <div className="footer-brand">
                         <div className="flex items-center gap-2 mb-4">
-                            <Sparkles style={{ color: 'var(--accent-neon)' }} size={20} />
+                            <img src={logoImg} alt="LivePrompt" style={{ width: '22px', height: '22px', borderRadius: '4px' }} />
                             <span className="logo" style={{ fontSize: '1.2rem' }}>LivePrompt</span>
                         </div>
                         <p className="text-muted" style={{ fontSize: '0.9rem', lineHeight: 1.6 }}>

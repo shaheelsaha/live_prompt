@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import {
     Lock, ArrowLeft, Eye, Sparkles,
     Copy, Check, Image, Video, Heart, FileText, Download,
-    Zap, Crown, ExternalLink
+    Zap, Crown, ExternalLink, X
 } from 'lucide-react';
 import type { Prompt } from '../types/Prompt';
 import RelatedPrompts from '../components/RelatedPrompts';
@@ -26,6 +26,8 @@ const PromptDetailPage = () => {
     const [unlockCount, setUnlockCount] = useState(0);
     const [galleryIndex, setGalleryIndex] = useState(0);
     const [fullPromptText, setFullPromptText] = useState<string | null>(null);
+    const [lightboxImages, setLightboxImages] = useState<string[]>([]);
+    const [lightboxIndex, setLightboxIndex] = useState(0);
 
     const FUNCTIONS_BASE = 'https://us-central1-prompt-factory-952f9.cloudfunctions.net';
 
@@ -218,6 +220,24 @@ const PromptDetailPage = () => {
         }
     };
 
+    const handleOpenLightbox = (url: string) => {
+        let imgs: string[] = [];
+        if (prompt?.images && prompt.images.length > 1) {
+            imgs = prompt.images;
+        } else if (prompt?.beforeImage && prompt?.afterImage) {
+            if (!prompt.beforeImage.match(/\.(mp4|webm)$/i)) imgs.push(prompt.beforeImage);
+            if (!prompt.afterImage.match(/\.(mp4|webm)$/i)) imgs.push(prompt.afterImage);
+        } else if (prompt?.outputMedia && !prompt.outputMedia.match(/\.(mp4|webm)$/i)) {
+            imgs.push(prompt.outputMedia);
+        }
+        
+        if (imgs.length === 0) imgs = [url];
+        
+        const index = imgs.findIndex(img => img === url);
+        setLightboxImages(imgs);
+        setLightboxIndex(index >= 0 ? index : 0);
+    };
+
     if (loading) {
         return (
             <section className="page-section">
@@ -278,7 +298,12 @@ const PromptDetailPage = () => {
                             <div className="prompt-gallery-track" style={{ transform: `translateX(-${galleryIndex * 100}%)` }}>
                                 {galleryImages.map((imgUrl, i) => (
                                     <div className="prompt-gallery-slide" key={i}>
-                                        <img src={imgUrl} alt={`${prompt.title} - Example ${i + 1}`} />
+                                        <img 
+                                            src={imgUrl} 
+                                            alt={`${prompt.title} - Example ${i + 1}`} 
+                                            onClick={() => handleOpenLightbox(imgUrl)}
+                                            style={{ cursor: 'zoom-in' }}
+                                        />
                                     </div>
                                 ))}
                             </div>
@@ -322,7 +347,13 @@ const PromptDetailPage = () => {
                                     {prompt.beforeImage.includes('.mp4') || prompt.beforeImage.includes('.webm') ? (
                                         <video src={prompt.beforeImage} autoPlay loop muted playsInline className="comparison-image" />
                                     ) : (
-                                        <img src={prompt.beforeImage} alt="Before" className="comparison-image" />
+                                        <img 
+                                            src={prompt.beforeImage} 
+                                            alt="Before" 
+                                            className="comparison-image" 
+                                            onClick={() => handleOpenLightbox(prompt.beforeImage!)}
+                                            style={{ cursor: 'zoom-in' }}
+                                        />
                                     )}
                                 </div>
                             </div>
@@ -332,7 +363,13 @@ const PromptDetailPage = () => {
                                     {prompt.afterImage.includes('.mp4') || prompt.afterImage.includes('.webm') ? (
                                         <video src={prompt.afterImage} autoPlay loop muted playsInline className="comparison-image" />
                                     ) : (
-                                        <img src={prompt.afterImage} alt="After" className="comparison-image" />
+                                        <img 
+                                            src={prompt.afterImage} 
+                                            alt="After" 
+                                            className="comparison-image" 
+                                            onClick={() => handleOpenLightbox(prompt.afterImage!)}
+                                            style={{ cursor: 'zoom-in' }}
+                                        />
                                     )}
                                 </div>
                             </div>
@@ -347,7 +384,8 @@ const PromptDetailPage = () => {
                             />
                         ) : (
                             <img src={prompt.outputMedia} alt={prompt.title}
-                                style={{ width: '100%', maxHeight: '65vh', objectFit: 'contain', borderRadius: 20, display: 'block', margin: '0 auto' }}
+                                style={{ width: '100%', maxHeight: '65vh', objectFit: 'contain', borderRadius: 20, display: 'block', margin: '0 auto', cursor: 'zoom-in' }}
+                                onClick={() => handleOpenLightbox(prompt.outputMedia!)}
                             />
                         )}
                     </div>
@@ -357,8 +395,13 @@ const PromptDetailPage = () => {
                 {/*  TAGS + TITLE + DESCRIPTION       */}
                 {/* ══════════════════════════════════ */}
                 <div style={{ marginBottom: 28 }}>
-                    {/* Tags */}
+                    {/* Tags & ID */}
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+                        {prompt.shortCode && (
+                            <span className="tag" style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.5px' }}>
+                                ID: {prompt.shortCode}
+                            </span>
+                        )}
                         {(Array.isArray(prompt.platform) ? prompt.platform : [prompt.platform]).map((plat: string) => (
                             <span key={plat} className="tag tag-platform" style={{ fontSize: '0.75rem' }}>{plat}</span>
                         ))}
@@ -683,6 +726,74 @@ const PromptDetailPage = () => {
                                     ? '🛒 Buy Credits to Unlock'
                                     : '🔓 Unlock This Prompt — Free'}
                     </button>
+                )}
+            </div>
+        )}
+
+        {/* FULLSCREEN IMAGE LIGHTBOX */}
+        {lightboxImages.length > 0 && (
+            <div 
+                style={{
+                    position: 'fixed',
+                    top: 0, left: 0, right: 0, bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.95)',
+                    zIndex: 99999,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'zoom-out',
+                    backdropFilter: 'blur(8px)'
+                }}
+                onClick={() => setLightboxImages([])}
+            >
+                <button 
+                    style={{ position: 'absolute', top: 24, right: 24, background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', borderRadius: '50%', padding: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s', zIndex: 2 }}
+                    onClick={(e) => { e.stopPropagation(); setLightboxImages([]); }}
+                    onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.2)'}
+                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'}
+                >
+                    <X size={24} />
+                </button>
+
+                {lightboxImages.length > 1 && (
+                    <button 
+                        style={{ position: 'absolute', left: 24, background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', borderRadius: '50%', width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s', zIndex: 2, fontSize: '1.5rem', fontWeight: 'bold' }}
+                        onClick={(e) => { 
+                            e.stopPropagation(); 
+                            setLightboxIndex(prev => prev === 0 ? lightboxImages.length - 1 : prev - 1); 
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.2)'}
+                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'}
+                    >
+                        ‹
+                    </button>
+                )}
+
+                {lightboxImages.length > 1 && (
+                    <button 
+                        style={{ position: 'absolute', right: 24, background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', borderRadius: '50%', width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s', zIndex: 2, fontSize: '1.5rem', fontWeight: 'bold' }}
+                        onClick={(e) => { 
+                            e.stopPropagation(); 
+                            setLightboxIndex(prev => prev === lightboxImages.length - 1 ? 0 : prev + 1); 
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.2)'}
+                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'}
+                    >
+                        ›
+                    </button>
+                )}
+
+                <img 
+                    src={lightboxImages[lightboxIndex]} 
+                    alt="Fullscreen view" 
+                    style={{ maxWidth: '95vw', maxHeight: '95vh', objectFit: 'contain', borderRadius: 8, boxShadow: '0 10px 40px rgba(0,0,0,0.5)' }}
+                    onClick={(e) => e.stopPropagation()}
+                />
+
+                {lightboxImages.length > 1 && (
+                    <div style={{ position: 'absolute', bottom: 24, background: 'rgba(0,0,0,0.5)', padding: '6px 16px', borderRadius: 20, color: 'white', fontSize: '0.9rem', fontWeight: 600 }}>
+                        {lightboxIndex + 1} / {lightboxImages.length}
+                    </div>
                 )}
             </div>
         )}

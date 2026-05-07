@@ -49,6 +49,7 @@ interface PromptForm {
     outputMediaThumb: string;
     outputMediaType: 'image' | 'video';
     tutorialVideo: string;
+    shortCode: string;
 }
 
 const emptyForm: PromptForm = {
@@ -57,7 +58,8 @@ const emptyForm: PromptForm = {
     tutorialLink: '', price: 3, impressions: 0, likes: 0,
     promptType: 'image', beforeImage: '', beforeImageThumb: '', 
     afterImage: '', afterImageThumb: '',
-    outputMedia: '', outputMediaThumb: '', outputMediaType: 'image', tutorialVideo: ''
+    outputMedia: '', outputMediaThumb: '', outputMediaType: 'image', tutorialVideo: '',
+    shortCode: ''
 };
 
 interface DashboardStats {
@@ -307,6 +309,7 @@ const AdminPage = () => {
             outputMediaThumb: prompt.outputMediaThumb || '',
             outputMediaType: prompt.outputMediaType || 'image',
             tutorialVideo: prompt.tutorialVideo || '',
+            shortCode: prompt.shortCode || '',
         });
         setEditingId(prompt.id);
         setShowForm(true);
@@ -563,6 +566,17 @@ const AdminPage = () => {
                                 />
                             </div>
 
+                            {/* Row: Short Code */}
+                            <div className="form-group">
+                                <label className="form-label">Short Code (Optional)</label>
+                                <input
+                                    className="form-input"
+                                    placeholder="e.g., PRO001. Leave blank to auto-generate."
+                                    value={form.shortCode}
+                                    onChange={e => setForm({ ...form, shortCode: e.target.value })}
+                                />
+                            </div>
+
                             {/* Row: Category + Platform + Type */}
                             <div className="form-row-3">
                                 <div className="form-group">
@@ -793,6 +807,7 @@ const AdminPage = () => {
                                         {/* Info */}
                                         <div style={{ padding: '10px 12px' }}>
                                             <h4 style={{ fontSize: '0.82rem', fontWeight: 600, marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                {prompt.shortCode && <span style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: 4, marginRight: 6, fontSize: '0.7rem' }}>{prompt.shortCode}</span>}
                                                 {prompt.title}
                                             </h4>
                                             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>

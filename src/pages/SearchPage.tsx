@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { httpsCallable } from 'firebase/functions';
-import { collection, getDocs, query, orderBy, limit, where, getCountFromServer } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, limit, where, getCountFromServer, startAfter } from 'firebase/firestore';
 import { db, functions } from '../firebase/config';
 import SearchBar from '../components/SearchBar';
 import PromptCard from '../components/PromptCard';
@@ -13,7 +13,7 @@ const platforms = ['All', 'Midjourney', 'Stable Diffusion', 'Grok', 'Sora', 'Run
 const SearchPage = () => {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
-    
+
     // Core search state
     const [searchQuery, setSearchQuery] = useState('');
     const [isSearching, setIsSearching] = useState(false);
@@ -21,7 +21,12 @@ const SearchPage = () => {
     const [vectorResults, setVectorResults] = useState<Prompt[] | null>(null);
     const [defaultPrompts, setDefaultPrompts] = useState<Prompt[]>([]);
     const [hasAttemptedSearch, setHasAttemptedSearch] = useState(false);
-    
+
+    // Pagination cursors
+    const [lastVisible, setLastVisible] = useState<any>(null);
+    const [hasMoreInDb, setHasMoreInDb] = useState(false);
+    const [isFetchingMore, setIsFetchingMore] = useState(false);
+
     // Categories and Counts
     const [categoryNames, setCategoryNames] = useState<string[]>([]);
     const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
@@ -36,7 +41,7 @@ const SearchPage = () => {
     useEffect(() => {
         const fetchDefaults = async () => {
             try {
-                // Fetch top 100 most popular for the default view
+                // Fetch all most popular for the default view
                 const q = query(collection(db, 'prompts'), orderBy('impressions', 'desc'), limit(100));
                 const snapshot = await getDocs(q);
 
@@ -47,6 +52,8 @@ const SearchPage = () => {
                     })) as Prompt[];
 
                     setDefaultPrompts(firestorePrompts);
+                    setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+                    setHasMoreInDb(snapshot.docs.length === 100);
 
                     // Extract unique categories from loaded data
                     const cats = Array.from(new Set(firestorePrompts.map(p => p.category).filter(Boolean)));
@@ -54,7 +61,7 @@ const SearchPage = () => {
                     // Fetch total count
                     const totalSnapshot = await getCountFromServer(collection(db, 'prompts'));
                     setTotalCount(totalSnapshot.data().count);
-                    
+
                     // Fetch counts for each category
                     const counts: Record<string, number> = {};
                     await Promise.all(cats.map(async (cat) => {
@@ -99,7 +106,7 @@ const SearchPage = () => {
     // When a category is selected AND we have not searched yet, fetch full category
     useEffect(() => {
         if (hasAttemptedSearch || selectedCategory === 'All') return;
-        
+
         const fetchCategoryPrompts = async () => {
             setIsLoadingDefaults(true);
             try {
@@ -107,15 +114,17 @@ const SearchPage = () => {
                     collection(db, 'prompts'),
                     where('category', '==', selectedCategory),
                     orderBy('impressions', 'desc'),
-                    limit(100)
+                    limit(30)
                 );
                 const snapshot = await getDocs(q);
                 const categoryPrompts = snapshot.docs.map(doc => ({
                     id: doc.id,
                     ...doc.data(),
                 })) as Prompt[];
-                
+
                 setDefaultPrompts(categoryPrompts);
+                setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+                setHasMoreInDb(snapshot.docs.length === 30);
                 setVisibleCount(30);
             } catch (err) {
                 console.log('Could not fetch category prompts:', err);
@@ -139,6 +148,8 @@ const SearchPage = () => {
                             id: doc.id, ...doc.data(),
                         })) as Prompt[];
                         setDefaultPrompts(firestorePrompts);
+                        setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+                        setHasMoreInDb(snapshot.docs.length === 100);
                     }
                 } finally {
                     setIsLoadingDefaults(false);
@@ -160,12 +171,27 @@ const SearchPage = () => {
         setVisibleCount(30);
 
         try {
+            // First check if it's an exact shortCode match
+            const codeQuery = queryText.trim().toUpperCase();
+            // Short codes are generally single tokens, so we only check if there are no spaces
+            if (!codeQuery.includes(' ')) {
+                const q = query(collection(db, 'prompts'), where('shortCode', '==', codeQuery), limit(1));
+                const snap = await getDocs(q);
+                if (!snap.empty) {
+                    const matchedDoc = snap.docs[0].data() as Prompt;
+                    const idOrSlug = matchedDoc.slug || snap.docs[0].id;
+                    navigate(`/prompt/${idOrSlug}`);
+                    return; // Stop searching!
+                }
+            }
+
+            // Fallback to AI Vector Search
             const queryCallable = httpsCallable(functions, 'publicVectorSearch');
             // Fetch up to 100 results so we can paginate locally
             const result = await queryCallable({ query: queryText, limit: 100 });
 
             const matchedPrompts = result.data as Prompt[];
-            
+
             console.log('[SearchPage] Matches:', matchedPrompts.length);
 
             if (!matchedPrompts || matchedPrompts.length === 0) {
@@ -204,16 +230,45 @@ const SearchPage = () => {
     });
 
     const visibleFilteredPrompts = filteredPrompts.slice(0, visibleCount);
-    const hasMoreToLoad = visibleCount < filteredPrompts.length;
+    const hasMoreToLoad = visibleCount < filteredPrompts.length || (!hasAttemptedSearch && hasMoreInDb);
 
-    const loadMore = () => setVisibleCount(prev => prev + 30);
+    const loadMore = async () => {
+        if (visibleCount < filteredPrompts.length) {
+            setVisibleCount(prev => prev + 30);
+            return;
+        }
+
+        if (!hasAttemptedSearch && hasMoreInDb && lastVisible) {
+            setIsFetchingMore(true);
+            try {
+                const fetchLimit = selectedCategory === 'All' ? 100 : 30;
+                let nextQ;
+                if (selectedCategory === 'All') {
+                    nextQ = query(collection(db, 'prompts'), orderBy('impressions', 'desc'), startAfter(lastVisible), limit(fetchLimit));
+                } else {
+                    nextQ = query(collection(db, 'prompts'), where('category', '==', selectedCategory), orderBy('impressions', 'desc'), startAfter(lastVisible), limit(fetchLimit));
+                }
+                const snap = await getDocs(nextQ);
+                const newPrompts = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Prompt[];
+
+                setDefaultPrompts(prev => [...prev, ...newPrompts]);
+                setLastVisible(snap.docs[snap.docs.length - 1]);
+                setHasMoreInDb(snap.docs.length === fetchLimit);
+                setVisibleCount(prev => prev + 30);
+            } catch (err) {
+                console.error("Error fetching more prompts:", err);
+            } finally {
+                setIsFetchingMore(false);
+            }
+        }
+    };
 
     const displayCategories = ['All', ...categoryNames];
 
     return (
         <div style={{ paddingTop: '80px', minHeight: 'calc(100vh - 200px)' }}>
             <div className="container pb-12">
-                
+
                 {/* Search Bar */}
                 <div className="search-filter-row mb-8">
                     <SearchBar
@@ -221,7 +276,7 @@ const SearchPage = () => {
                         onChange={setSearchQuery}
                         onSearch={handleNewSearch}
                         isSearching={isSearching}
-                        placeholder="Search prompts with AI... (press Enter)"
+                        placeholder="Search by ID or with AI... (press Enter)"
                     />
                 </div>
 
@@ -264,60 +319,61 @@ const SearchPage = () => {
                         <div className="loading-spinner"></div>
                         <p className="text-muted mt-4">{isSearching ? 'Searching with AI...' : 'Loading prompts...'}</p>
                     </div>
-                ) : 
-                
-                /* State: Found Results / Has Default Prompts */
-                filteredPrompts.length > 0 ? (
-                    <>
-                        <div className="flex justify-between items-center mb-8">
-                            <h2 style={{ fontSize: '1.5rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                {hasAttemptedSearch ? (
-                                    <><Sparkles size={22} style={{ color: 'var(--accent-neon)' }} /> AI Results for "{searchParams.get('q')}"</>
-                                ) : (
-                                    <>{selectedCategory !== 'All' ? selectedCategory : 'Explore Prompts'}</>
-                                )}
-                            </h2>
-                            <span className="text-muted" style={{ fontSize: '0.9rem' }}>
-                                {hasAttemptedSearch 
-                                    ? `${filteredPrompts.length} match${filteredPrompts.length !== 1 ? 'es' : ''}`
-                                    : `${selectedCategory === 'All' ? totalCount : categoryCounts[selectedCategory] || filteredPrompts.length} prompts`
-                                }
-                            </span>
-                        </div>
+                ) :
 
-                        <div className="grid">
-                            {visibleFilteredPrompts.map((prompt) => (
-                                <PromptCard key={prompt.id} prompt={prompt} />
-                            ))}
-                        </div>
+                    /* State: Found Results / Has Default Prompts */
+                    filteredPrompts.length > 0 ? (
+                        <>
+                            <div className="flex justify-between items-center mb-8">
+                                <h2 style={{ fontSize: '1.5rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    {hasAttemptedSearch ? (
+                                        <><Sparkles size={22} style={{ color: 'var(--accent-neon)' }} /> AI Results for "{searchParams.get('q')}"</>
+                                    ) : (
+                                        <>{selectedCategory !== 'All' ? selectedCategory : 'Explore Prompts'}</>
+                                    )}
+                                </h2>
+                                <span className="text-muted" style={{ fontSize: '0.9rem' }}>
+                                    {hasAttemptedSearch
+                                        ? `${filteredPrompts.length} match${filteredPrompts.length !== 1 ? 'es' : ''}`
+                                        : `${selectedCategory === 'All' ? totalCount : categoryCounts[selectedCategory] || filteredPrompts.length} prompts`
+                                    }
+                                </span>
+                            </div>
 
-                        {/* Pagination */}
-                        {hasMoreToLoad ? (
-                            <div className="flex justify-center mt-12 mb-8">
-                                <button 
-                                    className="btn btn-outline" 
-                                    onClick={loadMore} 
-                                    style={{ padding: '12px 32px' }}
-                                >
-                                    Load More Results
-                                </button>
+                            <div className="grid">
+                                {visibleFilteredPrompts.map((prompt) => (
+                                    <PromptCard key={prompt.id} prompt={prompt} />
+                                ))}
                             </div>
-                        ) : hasAttemptedSearch ? (
-                            <div className="flex justify-center mt-12 mb-8 text-center" style={{ color: 'var(--text-muted)' }}>
-                                <p>End of AI matches! Try using different words if you didn't find what you were looking for.</p>
-                            </div>
-                        ) : null}
-                    </>
-                ) : 
-                
-                /* State: No Results */
-                <div className="empty-state mt-16">
-                    <AlertCircle size={48} style={{ color: 'var(--text-muted)' }} />
-                    <h3 className="mt-4">No prompts found</h3>
-                    <p className="text-muted">
-                        Try adjusting your search terms or clearing your filters.
-                    </p>
-                </div>}
+
+                            {/* Pagination */}
+                            {hasMoreToLoad ? (
+                                <div className="flex justify-center mt-12 mb-8">
+                                    <button
+                                        className="btn btn-outline"
+                                        onClick={loadMore}
+                                        style={{ padding: '12px 32px' }}
+                                        disabled={isFetchingMore}
+                                    >
+                                        {isFetchingMore ? 'Loading Prompts...' : 'Load More Results'}
+                                    </button>
+                                </div>
+                            ) : hasAttemptedSearch ? (
+                                <div className="flex justify-center mt-12 mb-8 text-center" style={{ color: 'var(--text-muted)' }}>
+                                    <p>End of AI matches! Try using different words if you didn't find what you were looking for.</p>
+                                </div>
+                            ) : null}
+                        </>
+                    ) :
+
+                        /* State: No Results */
+                        <div className="empty-state mt-16">
+                            <AlertCircle size={48} style={{ color: 'var(--text-muted)' }} />
+                            <h3 className="mt-4">No prompts found</h3>
+                            <p className="text-muted">
+                                Try adjusting your search terms or clearing your filters.
+                            </p>
+                        </div>}
 
             </div>
         </div>

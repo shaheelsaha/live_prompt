@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, getDocs, query, orderBy, limit, where, getCountFromServer } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, limit, where, getCountFromServer, startAfter } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import Hero from '../components/Hero';
 import SearchBar from '../components/SearchBar';
@@ -34,6 +34,11 @@ const HomePage = () => {
     const [selectedCategory, setSelectedCategory] = useState('All');
     const [loading, setLoading] = useState(true);
 
+    // Pagination cursors
+    const [lastVisible, setLastVisible] = useState<any>(null);
+    const [hasMoreInDb, setHasMoreInDb] = useState(false);
+    const [isFetchingMore, setIsFetchingMore] = useState(false);
+
     // Initial load: top 200 prompts + extract all unique category names
     useEffect(() => {
         const fetchPrompts = async () => {
@@ -49,6 +54,8 @@ const HomePage = () => {
                     })) as Prompt[];
 
                     setAllPrompts(shuffleArray(firestorePrompts));
+                    setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+                    setHasMoreInDb(snapshot.docs.length === HOMEPAGE_LIMIT);
 
                     // Extract unique categories from loaded data
                     const cats = Array.from(new Set(firestorePrompts.map(p => p.category).filter(Boolean)));
@@ -56,7 +63,7 @@ const HomePage = () => {
                     // Fetch total count
                     const totalSnapshot = await getCountFromServer(collection(db, 'prompts'));
                     setTotalCount(totalSnapshot.data().count);
-                    
+
                     // Fetch counts for each category
                     const counts: Record<string, number> = {};
                     await Promise.all(cats.map(async (cat) => {
@@ -95,7 +102,7 @@ const HomePage = () => {
                     collection(db, 'prompts'),
                     where('category', '==', selectedCategory),
                     orderBy('impressions', 'desc'),
-                    limit(200)
+                    limit(30)
                 );
                 const snapshot = await getDocs(q);
                 const categoryPrompts = snapshot.docs.map(doc => ({
@@ -104,6 +111,8 @@ const HomePage = () => {
                 })) as Prompt[];
 
                 setAllPrompts(categoryPrompts);
+                setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+                setHasMoreInDb(snapshot.docs.length === 30);
                 setVisibleCount(30);
             } catch (err) {
                 console.log('Could not fetch category prompts:', err);
@@ -129,6 +138,8 @@ const HomePage = () => {
                             id: doc.id, ...doc.data(),
                         })) as Prompt[];
                         setAllPrompts(shuffleArray(firestorePrompts));
+                        setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+                        setHasMoreInDb(snapshot.docs.length === HOMEPAGE_LIMIT);
                     }
                 } catch (err) {
                     console.log('Could not fetch prompts:', err);
@@ -145,8 +156,38 @@ const HomePage = () => {
     const categories = ['All', ...categoryNames];
 
     // Load more prompts
-    const loadMore = () => {
-        setVisibleCount(prev => prev + 30);
+    const loadMore = async () => {
+        if (visibleCount < filteredPrompts.length) {
+            setVisibleCount(prev => prev + 30);
+            return;
+        }
+
+        if (hasMoreInDb && lastVisible) {
+            setIsFetchingMore(true);
+            try {
+                const fetchLimit = selectedCategory === 'All' ? HOMEPAGE_LIMIT : 30;
+                let nextQ;
+
+                if (selectedCategory === 'All') {
+                    nextQ = query(collection(db, 'prompts'), orderBy('impressions', 'desc'), startAfter(lastVisible), limit(fetchLimit));
+                } else {
+                    nextQ = query(collection(db, 'prompts'), where('category', '==', selectedCategory), orderBy('impressions', 'desc'), startAfter(lastVisible), limit(fetchLimit));
+                }
+
+                const snap = await getDocs(nextQ);
+                const newPrompts = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Prompt[];
+
+                setAllPrompts(prev => selectedCategory === 'All' ? [...prev, ...shuffleArray(newPrompts)] : [...prev, ...newPrompts]);
+                setLastVisible(snap.docs[snap.docs.length - 1]);
+                setHasMoreInDb(snap.docs.length === fetchLimit);
+                setVisibleCount(prev => prev + 30);
+
+            } catch (err) {
+                console.log('Error fetching more prompts from DB:', err);
+            } finally {
+                setIsFetchingMore(false);
+            }
+        }
     };
 
     const handleSearchNavigate = (searchText: string) => {
@@ -170,7 +211,7 @@ const HomePage = () => {
     });
 
     const visibleFilteredPrompts = filteredPrompts.slice(0, visibleCount);
-    const hasMoreToLoad = visibleCount < filteredPrompts.length;
+    const hasMoreToLoad = visibleCount < filteredPrompts.length || hasMoreInDb;
 
     // Chunk visible prompts into blocks of 30, so each "Load More" adds a new 3-row cluster
     const chunkArray = (array: Prompt[], size: number) => {
@@ -180,7 +221,7 @@ const HomePage = () => {
         }
         return result;
     };
-    
+
     const visiblePromptsChunks = chunkArray(visibleFilteredPrompts, 30);
 
 
@@ -210,7 +251,7 @@ const HomePage = () => {
                                 className={`filter-chip ${selectedCategory === cat ? 'active' : ''}`}
                                 onClick={() => handleCategoryChange(cat)}
                             >
-                                {cat} 
+                                {cat}
                                 {cat === 'All' && totalCount > 0 && <span style={{ opacity: 0.7, marginLeft: '4px', fontSize: '0.85em' }}>({totalCount})</span>}
                                 {cat !== 'All' && categoryCounts[cat] !== undefined && <span style={{ opacity: 0.7, marginLeft: '4px', fontSize: '0.85em' }}>({categoryCounts[cat]})</span>}
                             </button>
@@ -262,16 +303,17 @@ const HomePage = () => {
                                     <PromptCard key={prompt.id} prompt={prompt} />
                                 ))}
                             </div>
-                            
+
                             {/* Load More Button for Grid Mode */}
                             {hasMoreToLoad && (
                                 <div className="flex justify-center mt-12 mb-8">
-                                    <button 
-                                        className="btn btn-outline" 
-                                        onClick={loadMore} 
+                                    <button
+                                        className="btn btn-outline"
+                                        onClick={loadMore}
                                         style={{ padding: '12px 32px' }}
+                                        disabled={isFetchingMore}
                                     >
-                                        Load More Prompts
+                                        {isFetchingMore ? 'Loading Prompts...' : 'Load More Prompts'}
                                     </button>
                                 </div>
                             )}
@@ -324,12 +366,13 @@ const HomePage = () => {
                             {/* Load More Button */}
                             {hasMoreToLoad && (
                                 <div className="flex justify-center mt-12 mb-8">
-                                    <button 
-                                        className="btn btn-outline" 
-                                        onClick={loadMore} 
+                                    <button
+                                        className="btn btn-outline"
+                                        onClick={loadMore}
                                         style={{ padding: '12px 32px' }}
+                                        disabled={isFetchingMore}
                                     >
-                                        Load More Prompts
+                                        {isFetchingMore ? 'Loading Prompts...' : 'Load More Prompts'}
                                     </button>
                                 </div>
                             )}

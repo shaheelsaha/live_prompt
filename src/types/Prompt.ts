@@ -1,6 +1,7 @@
 export interface Prompt {
     id: string;
     slug?: string;
+    shortCode?: string;
     category: string;
     platform: string | string[];
     title: string;

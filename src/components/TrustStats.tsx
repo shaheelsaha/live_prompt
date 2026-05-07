@@ -31,8 +31,6 @@ const useCountUp = (end: number, duration = 2000) => {
 };
 
 const formatNumber = (num: number): string => {
-    if (num >= 1_000_000) return (num / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
-    if (num >= 1_000) return (num / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
     return num.toLocaleString();
 };
 
@@ -76,10 +74,10 @@ const TrustStats = () => {
     const animatedViews = useCountUp(stats.totalViews);
 
     const statItems = [
-        { icon: <Users size={22} />, value: animatedUsers, label: 'Registered Users', color: '#818cf8' },
-        { icon: <Sparkles size={22} />, value: animatedPrompts, label: 'Total Prompts', color: '#a855f7' },
-        { icon: <Clock size={22} />, value: animatedRecent, label: 'Added This Week', color: '#f472b6' },
-        { icon: <Eye size={22} />, value: animatedViews, label: 'Total Views', color: '#34d399' },
+        { icon: <Users size={22} />, value: animatedUsers, label: 'Registered Users', shortLabel: 'Users', color: '#818cf8' },
+        { icon: <Sparkles size={22} />, value: animatedPrompts, label: 'Total Prompts', shortLabel: 'Prompts', color: '#a855f7' },
+        { icon: <Clock size={22} />, value: animatedRecent, label: 'Added This Week', shortLabel: 'Prompts This Week', color: '#f472b6' },
+        { icon: <Eye size={22} />, value: animatedViews, label: 'Total Views', shortLabel: 'Views', color: '#34d399' },
     ];
 
     return (
@@ -96,7 +94,8 @@ const TrustStats = () => {
                             {item.icon}
                         </div>
                         <span className="trust-stat-number">{formatNumber(item.value)}</span>
-                        <span className="trust-stat-label">{item.label}</span>
+                        <span className="trust-stat-label trust-stat-label--full">{item.label}</span>
+                        <span className="trust-stat-label trust-stat-label--short">{item.shortLabel}</span>
                     </div>
                 ))}
             </div>

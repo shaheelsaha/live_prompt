@@ -1,16 +1,43 @@
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Rocket } from 'lucide-react';
 import TrustStats from './TrustStats';
 
 const Hero = () => {
     const navigate = useNavigate();
+    const [totalPrompts, setTotalPrompts] = useState<number | null>(null);
+
+    useEffect(() => {
+        const fetchTotalPrompts = async () => {
+            try {
+                const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID || 'prompt-factory-952f9';
+                const functionUrl = `https://us-central1-${projectId}.cloudfunctions.net/getTrustStats`;
+                const response = await fetch(functionUrl);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.totalPrompts) {
+                        setTotalPrompts(data.totalPrompts);
+                    }
+                }
+            } catch (err) {
+                console.log('Could not fetch total prompts for hero badge:', err);
+            }
+        };
+        fetchTotalPrompts();
+    }, []);
 
     return (
         <header className="hero">
             <div className="hero-glow"></div>
             <div className="container text-center" style={{ position: 'relative', zIndex: 1 }}>
-                <div className="hero-badge">
-                    <Rocket size={14} /> 500+ ready-to-use prompts
+                <div
+                    className="hero-badge"
+                    style={{
+                        opacity: totalPrompts === null ? 0 : 1,
+                        transition: 'opacity 0.5s ease',
+                    }}
+                >
+                    <Rocket size={14} /> {totalPrompts ?? '...'}+ ready-to-use prompts
                 </div>
                 <h1>
                     Stop guessing prompts. <br />

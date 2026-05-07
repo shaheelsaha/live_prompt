@@ -1,4 +1,5 @@
-  const { onRequest } = require("firebase-functions/v2/https");
+const { onRequest } = require("firebase-functions/v2/https");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 const admin = require("firebase-admin");
 const Busboy = require("busboy");
 const { v4: uuidv4 } = require("uuid");
@@ -10,6 +11,19 @@ admin.initializeApp();
 
 const db = admin.firestore();
 const bucket = admin.storage().bucket();
+
+async function getNextPromptCode() {
+  const counterRef = db.collection('counters').doc('promptCode');
+  return await db.runTransaction(async (t) => {
+    const doc = await t.get(counterRef);
+    let nextNum = 1;
+    if (doc.exists) {
+      nextNum = (doc.data().current || 0) + 1;
+    }
+    t.set(counterRef, { current: nextNum }, { merge: true });
+    return `PRO${nextNum.toString().padStart(3, '0')}`;
+  });
+}
 
 // Secret key — must match the one in your iOS Shortcut
 const API_SECRET = "988e1f963ecf93e9c2d48f087cdc236d862e6cfbf40104f5e73d4acd75e4e966";
@@ -102,6 +116,9 @@ exports.publishPrompt = onRequest(
           .replace(/[^a-z0-9]+/g, "-")
           .replace(/(^-|-$)/g, "");
 
+        // Generate shortcode
+        const shortCode = await getNextPromptCode();
+
         // 5. Write to Firestore (fullPrompt goes to private subcollection)
         const docRef = await db.collection("prompts").add({
           title,
@@ -109,6 +126,7 @@ exports.publishPrompt = onRequest(
           platform,
           category,
           slug,
+          shortCode,
           promptType: "image",
           afterImage: imageUrl,
           outputMedia: imageUrl,
@@ -221,17 +239,17 @@ exports.addPromptFromShortcut = onRequest(
           }
 
           console.log(`[Upload - ${fieldNameLog}] Processing file: ${fileObj.name} (MIME: ${fileObj.mime})`);
-          
+
           // CRITICAL: Apple Shortcuts sometimes sends video as application/octet-stream
           // We need to check the extension string too just in case.
           const isVideo = fileObj.mime.startsWith("video/") || fileObj.name.toLowerCase().endsWith(".mp4") || fileObj.name.toLowerCase().endsWith(".mov");
-          
+
           const ext = path.extname(fileObj.name) || (isVideo ? ".mp4" : ".jpg");
           const folder = isVideo ? "prompt-videos" : "prompt-images";
           const storagePath = `${folder}/${Date.now()}_${uuidv4()}${ext}`;
-          
+
           console.log(`[Upload - ${fieldNameLog}] Saving to folder: ${folder}, Path: ${storagePath}`);
-          
+
           const fileRef = bucket.file(storagePath);
           const token = uuidv4();
 
@@ -260,13 +278,13 @@ exports.addPromptFromShortcut = onRequest(
 
           const promptText = fields.prompt || "";
           const description = fields.description || title;
-          
+
           // ── Fuzzy Matching for Platform and Category ──
           const PLATFORMS = [
             "Midjourney", "Stable Diffusion", "Grok", "Sora",
             "Runway", "Nano banana", "ChatGPT", "Other"
           ];
-          
+
           const CATEGORIES = [
             "Product & E-commerce", "Real Estate & Interior", "Fashion & Beauty",
             "Food & Restaurant", "Sports & Fitness", "Travel & Nature",
@@ -337,7 +355,7 @@ exports.addPromptFromShortcut = onRequest(
                 else if (contentType.includes("gif")) ext = ".gif";
                 else {
                   const urlExt = imgUrl.split("?")[0].split(".").pop()?.toLowerCase();
-                  if (["jpg","jpeg","png","webp","gif"].includes(urlExt)) ext = `.${urlExt}`;
+                  if (["jpg", "jpeg", "png", "webp", "gif"].includes(urlExt)) ext = `.${urlExt}`;
                 }
 
                 const storagePath = `prompt-images/${Date.now()}_${uuidv4()}${ext}`;
@@ -371,6 +389,9 @@ exports.addPromptFromShortcut = onRequest(
           const primaryImage = images.length > 0 ? images[0] : (media.type === "image" ? media.url : "");
           const primaryMedia = images.length > 0 ? images[0] : media.url;
 
+          // Generate shortcode
+          const shortCode = await getNextPromptCode();
+
           // Write to Firestore (fullPrompt goes to private subcollection)
           const docData = {
             title,
@@ -378,6 +399,7 @@ exports.addPromptFromShortcut = onRequest(
             platform: platformField,
             category,
             slug,
+            shortCode,
             promptType: media.type || "image",
             afterImage: primaryImage,
             outputMedia: primaryMedia,
@@ -767,9 +789,9 @@ exports.polarWebhook = onRequest(
         const tier = isYearly ? "pro_yearly" : "pro_monthly";
 
         // Polar may nest customer_id differently across API versions
-        const customerId = subscription.customer_id 
-          || subscription.customerId 
-          || subscription.customer?.id 
+        const customerId = subscription.customer_id
+          || subscription.customerId
+          || subscription.customer?.id
           || null;
 
         const subscriptionData = {
@@ -815,14 +837,14 @@ exports.polarWebhook = onRequest(
 
         // Automatically log all payments (subscription charges and credit pack buys)
         await userRef.collection("transactions").add({
-            amount: order.amount || 0,
-            currency: order.currency || "usd",
-            description: order.product?.name || (creditPack ? `Purchased Credits (Pack: ${creditPack})` : "Subscription Payment"),
-            type: creditPack ? "credit_pack" : "subscription",
-            pack: creditPack || null,
-            orderId: order.id || null,
-            polarProductId: order.product_id || null,
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          amount: order.amount || 0,
+          currency: order.currency || "usd",
+          description: order.product?.name || (creditPack ? `Purchased Credits (Pack: ${creditPack})` : "Subscription Payment"),
+          type: creditPack ? "credit_pack" : "subscription",
+          pack: creditPack || null,
+          orderId: order.id || null,
+          polarProductId: order.product_id || null,
+          timestamp: admin.firestore.FieldValue.serverTimestamp(),
         });
 
         // If it was a credit pack, actually increment their balance
@@ -850,7 +872,8 @@ exports.polarWebhook = onRequest(
 
 // ═══════════════════════════════════════════════════════════
 //  getTrustStats — returns aggregated stats for the home page
-//  Safely counts users and prompts without exposing data or rules
+//  Now reads from a cache document (meta/trustStats) for instant response.
+//  The cache is refreshed every 30 minutes by updateTrustStatsCache below.
 // ═══════════════════════════════════════════════════════════
 exports.getTrustStats = onRequest(
   { cors: true, maxInstances: 5, region: "us-central1" },
@@ -860,49 +883,92 @@ exports.getTrustStats = onRequest(
     }
 
     try {
-      // 1. Total Users
-      const usersSnap = await db.collection("users").count().get();
-      const totalUsers = usersSnap.data().count;
+      // Read from cache — just 1 document, super fast!
+      const cacheSnap = await db.collection("meta").doc("trustStats").get();
 
-      // 2. Total Prompts
-      const promptsSnap = await db.collection("prompts").count().get();
-      const totalPrompts = promptsSnap.data().count;
-
-      // 3. Recent Prompts (Last 7 Days)
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      const recentSnap = await db.collection("prompts")
-        .where("createdAt", ">=", admin.firestore.Timestamp.fromDate(sevenDaysAgo))
-        .count()
-        .get();
-      const recentPrompts = recentSnap.data().count;
-
-      // 4. Total Views (Sum of impressions)
-      // Using AggregateField requires admin sdk version that supports it (v11+). 
-      // If it fails, fallback to iterating (which is fast when < 1000 prompts)
-      let totalViews = 0;
-      try {
-        const viewsSnap = await db.collection("prompts")
-          .aggregate({ totalViews: admin.firestore.AggregateField.sum("impressions") })
-          .get();
-        totalViews = viewsSnap.data().totalViews || 0;
-      } catch (aggErr) {
-        console.warn("Aggregate sum failed, falling back to manual count");
-        const allPrompts = await db.collection("prompts").select("impressions").get();
-        allPrompts.forEach(doc => {
-           totalViews += doc.data().impressions || 0;
+      if (cacheSnap.exists) {
+        const cached = cacheSnap.data();
+        return res.status(200).json({
+          totalUsers: cached.totalUsers || 0,
+          totalPrompts: cached.totalPrompts || 0,
+          recentPrompts: cached.recentPrompts || 0,
+          totalViews: cached.totalViews || 0,
+          cachedAt: cached.updatedAt?.toDate?.() || null,
         });
       }
 
-      return res.status(200).json({
-        totalUsers,
-        totalPrompts,
-        recentPrompts,
-        totalViews
+      // Fallback: if cache doesn't exist yet, compute live and seed it
+      console.warn("[getTrustStats] Cache miss — computing live and seeding cache.");
+      const stats = await computeTrustStats();
+      await db.collection("meta").doc("trustStats").set({
+        ...stats,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
+      return res.status(200).json(stats);
+
     } catch (err) {
       console.error("getTrustStats error:", err);
       return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+//  computeTrustStats — shared helper to calculate all stats
+// ═══════════════════════════════════════════════════════════
+async function computeTrustStats() {
+  // 1. Total Users
+  const usersSnap = await db.collection("users").count().get();
+  const totalUsers = usersSnap.data().count;
+
+  // 2. Total Prompts
+  const promptsSnap = await db.collection("prompts").count().get();
+  const totalPrompts = promptsSnap.data().count;
+
+  // 3. Recent Prompts (Last 7 Days)
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const recentSnap = await db.collection("prompts")
+    .where("createdAt", ">=", admin.firestore.Timestamp.fromDate(sevenDaysAgo))
+    .count()
+    .get();
+  const recentPrompts = recentSnap.data().count;
+
+  // 4. Total Views (Sum of impressions)
+  let totalViews = 0;
+  try {
+    const viewsSnap = await db.collection("prompts")
+      .aggregate({ totalViews: admin.firestore.AggregateField.sum("impressions") })
+      .get();
+    totalViews = viewsSnap.data().totalViews || 0;
+  } catch (aggErr) {
+    console.warn("Aggregate sum failed, falling back to manual count");
+    const allPrompts = await db.collection("prompts").select("impressions").get();
+    allPrompts.forEach(doc => {
+      totalViews += doc.data().impressions || 0;
+    });
+  }
+
+  return { totalUsers, totalPrompts, recentPrompts, totalViews };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  updateTrustStatsCache — scheduled every 30 minutes
+//  Computes the stats and writes them to meta/trustStats
+// ═══════════════════════════════════════════════════════════
+exports.updateTrustStatsCache = onSchedule(
+  { schedule: "every 30 minutes", region: "us-central1", timeZone: "UTC" },
+  async () => {
+    try {
+      console.log("[updateTrustStatsCache] Computing stats...");
+      const stats = await computeTrustStats();
+      await db.collection("meta").doc("trustStats").set({
+        ...stats,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      console.log("[updateTrustStatsCache] Cache updated:", stats);
+    } catch (err) {
+      console.error("[updateTrustStatsCache] Error:", err);
     }
   }
 );
@@ -1158,10 +1224,12 @@ exports.adminWritePrompt = onRequest(
 
       // CREATE
       if (action === "create") {
-        const { fullPrompt, ...publicData } = data;
+        const { fullPrompt, shortCode, ...publicData } = data;
+        let finalShortCode = shortCode && shortCode.trim() !== "" ? shortCode.trim() : await getNextPromptCode();
 
         const docRef = await db.collection("prompts").add({
           ...publicData,
+          shortCode: finalShortCode,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
 
@@ -1333,16 +1401,16 @@ exports.createPolarPortalSession = onRequest(
       if (!customerId && userData.email) {
         console.log(`[Portal] Looking up customer by email: ${userData.email}`);
         const fetchRes = await fetch(`${polarApiBase}/v1/customers?email=${encodeURIComponent(userData.email)}`, {
-            headers: { "Authorization": `Bearer ${POLAR_ACCESS_TOKEN}` }
+          headers: { "Authorization": `Bearer ${POLAR_ACCESS_TOKEN}` }
         });
         if (fetchRes.ok) {
-            const data = await fetchRes.json();
-            console.log(`[Portal] Customer search result:`, JSON.stringify(data).substring(0, 200));
-            if (data.items && data.items.length > 0) {
-                customerId = data.items[0].id;
-                // Save it back to cache for next time
-                await userDoc.ref.set({ subscription: { polarCustomerId: customerId } }, { merge: true });
-            }
+          const data = await fetchRes.json();
+          console.log(`[Portal] Customer search result:`, JSON.stringify(data).substring(0, 200));
+          if (data.items && data.items.length > 0) {
+            customerId = data.items[0].id;
+            // Save it back to cache for next time
+            await userDoc.ref.set({ subscription: { polarCustomerId: customerId } }, { merge: true });
+          }
         }
       }
 
@@ -1538,7 +1606,7 @@ exports.publicVectorSearch = onRequest(
       }
 
       const openaiParams = {
-          apiKey: process.env.OPENAI_API_KEY
+        apiKey: process.env.OPENAI_API_KEY
       };
       const openai = new OpenAI(openaiParams);
 
@@ -1556,7 +1624,7 @@ exports.publicVectorSearch = onRequest(
 
       // 2. Perform vector search in Firestore
       const vectorValue = admin.firestore.FieldValue.vector(vectorArray);
-      
+
       const snapshot = await db.collection("prompts")
         .findNearest("embedding", vectorValue, {
           limit: fetchLimit,
@@ -1672,6 +1740,155 @@ exports.backfillEmbeddings = onRequest(
     } catch (err) {
       console.error("backfillEmbeddings error:", err);
       return res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+//  migrateShortCodes — ONE-TIME migration endpoint
+//  Adds PROxxx shortCode to all existing prompts that don't have one
+//  DELETE THIS FUNCTION AFTER RUNNING IT ONCE
+// ═══════════════════════════════════════════════════════════
+exports.migrateShortCodes = onRequest(
+  { cors: true, maxInstances: 1, region: "us-central1", timeoutSeconds: 540, memory: "512MiB" },
+  async (req, res) => {
+    // Only allow admin via secret
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.replace("Bearer ", "").trim();
+    if (token !== API_SECRET && req.query.secret !== API_SECRET) {
+      return res.status(401).json({ error: "Unauthorized. Please provide ?secret=YOUR_SECRET" });
+    }
+
+    try {
+      console.log("Starting shortCode migration...");
+      const snapshot = await db.collection("prompts").orderBy("createdAt", "asc").get();
+      console.log(`Found ${snapshot.size} prompts to migrate.`);
+
+      let migrated = 0;
+      let skipped = 0;
+      let counter = 1;
+
+      for (const doc of snapshot.docs) {
+        const data = doc.data();
+
+        if (data.shortCode) {
+          skipped++;
+          counter = Math.max(counter, parseInt(data.shortCode.replace("PRO", "")) + 1);
+          continue;
+        }
+
+        const shortCode = `PRO${counter.toString().padStart(3, '0')}`;
+        await doc.ref.update({ shortCode: shortCode });
+        migrated++;
+        counter++;
+      }
+
+      // Update the latest counter
+      const counterRef = db.collection('counters').doc('promptCode');
+      await counterRef.set({ current: counter - 1 }, { merge: true });
+
+      return res.status(200).json({
+        success: true,
+        migrated,
+        skipped,
+        total: snapshot.size,
+        nextCode: `PRO${counter.toString().padStart(3, '0')}`
+      });
+    } catch (err) {
+      console.error("migrateShortCodes error:", err);
+      return res.status(500).json({ error: "Migration failed", details: err.message });
+    }
+  }
+);
+// -----------------------------------------------------------
+// Temp function to backfill missing impressions
+// -----------------------------------------------------------
+exports.fixImpressions = onRequest(
+  { cors: true, maxInstances: 1, region: "us-central1" },
+  async (req, res) => {
+    try {
+      const snapshot = await db.collection("prompts").get();
+      let updated = 0;
+      for (const doc of snapshot.docs) {
+        const data = doc.data();
+        if (data.impressions === undefined) {
+          await doc.ref.update({ impressions: 0 });
+          updated++;
+        }
+      }
+      return res.status(200).json({ success: true, message: "Updated documents" });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+//  getPromptDetails — returns public details of a prompt by ID
+//  GET with query param: ?id=<promptId>
+// ═══════════════════════════════════════════════════════════
+exports.getPromptDetails = onRequest(
+  { cors: true, maxInstances: 5, region: "us-central1" },
+  async (req, res) => {
+    if (req.method !== "GET") {
+      return res.status(405).json({ error: "Method not allowed" });
+    }
+
+    // Require admin via secret
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.replace("Bearer ", "").trim();
+    if (token !== API_SECRET && req.query.secret !== API_SECRET) {
+      return res.status(401).json({ error: "Unauthorized. Please provide ?secret=YOUR_SECRET or Bearer token" });
+    }
+
+    const promptId = req.query.id || req.query.promptId;
+    if (!promptId) {
+      return res.status(400).json({ error: "Prompt ID is required" });
+    }
+
+    try {
+      let docRef = db.collection("prompts").doc(promptId);
+      let docSnap = await docRef.get();
+
+      if (!docSnap.exists) {
+        // Fallback: try to find by shortCode
+        const querySnapshot = await db.collection("prompts").where("shortCode", "==", promptId).limit(1).get();
+        if (!querySnapshot.empty) {
+          docSnap = querySnapshot.docs[0];
+          docRef = docSnap.ref;
+        } else {
+          return res.status(404).json({ error: "Prompt not found" });
+        }
+      }
+
+      const data = docSnap.data();
+      
+      // We explicitly exclude the "embedding" field if it exists, since it's large and unnecessary
+      delete data.embedding;
+
+      // Fetch the actual prompt text from the private subcollection
+      try {
+        const privateSnap = await docRef.collection("private").doc("content").get();
+        if (privateSnap.exists) {
+          data.fullPrompt = privateSnap.data().fullPrompt;
+        }
+      } catch (err) {
+        console.warn("Could not fetch private subcollection for prompt", promptId);
+      }
+
+      // Construct the SEO URL based on the slug
+      if (data.slug) {
+        data.seoUrl = `https://promptfactory.cc/prompt/${data.slug}`;
+      }
+
+      return res.status(200).json({
+        success: true,
+        id: docSnap.id,
+        data: data
+      });
+    } catch (err) {
+      console.error("getPromptDetails error:", err);
+      return res.status(500).json({ error: "Internal server error" });
     }
   }
 );

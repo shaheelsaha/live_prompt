@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Sparkles, Search, LogOut, User, Menu, X, LayoutDashboard, Settings } from 'lucide-react';
+import { Search, LogOut, User, Menu, X, LayoutDashboard, Settings } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ADMIN_EMAIL } from '../firebase/config';
+import logoImg from '../assets/logo.png';
 
 const Navbar = () => {
     const { user, loading, logout } = useAuth();
@@ -19,7 +20,7 @@ const Navbar = () => {
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
         if (searchQuery.trim()) {
-            navigate(`/?q=${encodeURIComponent(searchQuery.trim())}`);
+            navigate(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
         }
     };
 
@@ -28,7 +29,7 @@ const Navbar = () => {
             <div className="container flex justify-between items-center">
                 {/* Logo */}
                 <Link to="/" className="flex items-center gap-2" style={{ textDecoration: 'none', color: 'inherit' }}>
-                    <Sparkles style={{ color: 'var(--accent-neon)' }} size={24} />
+                    <img src={logoImg} alt="LivePrompt" style={{ width: '28px', height: '28px', borderRadius: '6px' }} />
                     <span className="logo">LivePrompt</span>
                 </Link>
 
@@ -40,12 +41,24 @@ const Navbar = () => {
                     <Link to="/contact" className="nav-link">Contact</Link>
                 </div>
 
-                {/* Search Bar */}
+                {/* Search Bar (Desktop) */}
                 <form className="search-form" onSubmit={handleSearch}>
                     <Search size={16} className="search-icon" />
                     <input
                         type="text"
-                        placeholder="Search prompts..."
+                        placeholder="Search by ID or AI..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="search-input"
+                    />
+                </form>
+
+                {/* Mobile Search Bar (always visible on mobile) */}
+                <form className="search-form mobile-header-search" onSubmit={handleSearch}>
+                    <Search size={14} className="search-icon" />
+                    <input
+                        type="text"
+                        placeholder="Search..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         className="search-input"
@@ -106,7 +119,7 @@ const Navbar = () => {
                     )}
                     <form className="search-form mobile" onSubmit={handleSearch}>
                         <Search size={16} className="search-icon" />
-                        <input type="text" placeholder="Search prompts..." value={searchQuery}
+                        <input type="text" placeholder="Search by ID or AI..." value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)} className="search-input" />
                     </form>
                     {user ? (
