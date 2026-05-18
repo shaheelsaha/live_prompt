@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Rocket } from 'lucide-react';
 import TrustStats from './TrustStats';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase/config';
 
 const Hero = () => {
     const navigate = useNavigate();
@@ -9,19 +11,14 @@ const Hero = () => {
 
     useEffect(() => {
         const fetchTotalPrompts = async () => {
-            try {
-                const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID || 'prompt-factory-952f9';
-                const functionUrl = `https://us-central1-${projectId}.cloudfunctions.net/getTrustStats`;
-                const response = await fetch(functionUrl);
-                if (response.ok) {
-                    const data = await response.json();
+                const docRef = doc(db, 'meta', 'trustStats');
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
                     if (data.totalPrompts) {
                         setTotalPrompts(data.totalPrompts);
                     }
                 }
-            } catch (err) {
-                console.log('Could not fetch total prompts for hero badge:', err);
-            }
         };
         fetchTotalPrompts();
     }, []);

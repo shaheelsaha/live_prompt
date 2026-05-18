@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, getDocs, query, orderBy, limit, where, getCountFromServer, startAfter } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, limit, where, getCountFromServer, startAfter, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import Hero from '../components/Hero';
 import SearchBar from '../components/SearchBar';
@@ -43,44 +43,47 @@ const HomePage = () => {
     useEffect(() => {
         const fetchPrompts = async () => {
             try {
-                // Fetch top 200 most popular for the default scrolling view
-                const q = query(collection(db, 'prompts'), orderBy('impressions', 'desc'), limit(HOMEPAGE_LIMIT));
-                const snapshot = await getDocs(q);
+                // Fetch cached top 200 most popular for the default scrolling view
+                const docRef = doc(db, 'meta', 'homepagePrompts');
+                const snapshot = await getDoc(docRef);
 
-                if (!snapshot.empty) {
-                    const firestorePrompts = snapshot.docs.map(doc => ({
-                        id: doc.id,
-                        ...doc.data(),
-                    })) as Prompt[];
+                if (snapshot.exists() && snapshot.data().prompts) {
+                    const firestorePrompts = snapshot.data().prompts as Prompt[];
 
                     setAllPrompts(shuffleArray(firestorePrompts));
-                    setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
-                    setHasMoreInDb(snapshot.docs.length === HOMEPAGE_LIMIT);
+                    setLastVisible(null);
+                    setHasMoreInDb(false);
 
                     // Extract unique categories from loaded data
                     const cats = Array.from(new Set(firestorePrompts.map(p => p.category).filter(Boolean)));
+                    setCategoryNames(cats);
 
-                    // Fetch total count
-                    const totalSnapshot = await getCountFromServer(collection(db, 'prompts'));
-                    setTotalCount(totalSnapshot.data().count);
+                    // Fetch total count and category counts in the background so it doesn't block UI
+                    const fetchCountsBg = async () => {
+                        try {
+                            const totalSnapshot = await getCountFromServer(collection(db, 'prompts'));
+                            setTotalCount(totalSnapshot.data().count);
 
-                    // Fetch counts for each category
-                    const counts: Record<string, number> = {};
-                    await Promise.all(cats.map(async (cat) => {
-                        const catQuery = query(collection(db, 'prompts'), where('category', '==', cat));
-                        const countSnap = await getCountFromServer(catQuery);
-                        counts[cat] = countSnap.data().count;
-                    }));
-                    setCategoryCounts(counts);
+                            const counts: Record<string, number> = {};
+                            await Promise.all(cats.map(async (cat) => {
+                                const catQuery = query(collection(db, 'prompts'), where('category', '==', cat));
+                                const countSnap = await getCountFromServer(catQuery);
+                                counts[cat] = countSnap.data().count;
+                            }));
+                            setCategoryCounts(counts);
 
-                    // Sort categories by count (high to low), then by name as a fallback
-                    const sortedCats = cats.sort((a, b) => {
-                        const countA = counts[a] || 0;
-                        const countB = counts[b] || 0;
-                        if (countB !== countA) return countB - countA;
-                        return a.localeCompare(b);
-                    });
-                    setCategoryNames(sortedCats);
+                            const sortedCats = cats.sort((a, b) => {
+                                const countA = counts[a] || 0;
+                                const countB = counts[b] || 0;
+                                if (countB !== countA) return countB - countA;
+                                return a.localeCompare(b);
+                            });
+                            setCategoryNames(sortedCats);
+                        } catch (err) {
+                            console.log('Error fetching counts background:', err);
+                        }
+                    };
+                    fetchCountsBg();
                 }
             } catch (err) {
                 console.log('Could not fetch prompts:', err);
@@ -131,15 +134,13 @@ const HomePage = () => {
             setLoading(true);
             const fetchDefault = async () => {
                 try {
-                    const q = query(collection(db, 'prompts'), orderBy('impressions', 'desc'), limit(HOMEPAGE_LIMIT));
-                    const snapshot = await getDocs(q);
-                    if (!snapshot.empty) {
-                        const firestorePrompts = snapshot.docs.map(doc => ({
-                            id: doc.id, ...doc.data(),
-                        })) as Prompt[];
+                    const docRef = doc(db, 'meta', 'homepagePrompts');
+                    const snapshot = await getDoc(docRef);
+                    if (snapshot.exists() && snapshot.data().prompts) {
+                        const firestorePrompts = snapshot.data().prompts as Prompt[];
                         setAllPrompts(shuffleArray(firestorePrompts));
-                        setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
-                        setHasMoreInDb(snapshot.docs.length === HOMEPAGE_LIMIT);
+                        setLastVisible(null);
+                        setHasMoreInDb(false);
                     }
                 } catch (err) {
                     console.log('Could not fetch prompts:', err);

@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { Users, Sparkles, Clock, Eye } from 'lucide-react';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase/config';
 
 interface Stats {
     totalUsers: number;
@@ -41,15 +43,11 @@ const TrustStats = () => {
     useEffect(() => {
         const fetchStats = async () => {
             try {
-                const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID || 'prompt-factory-952f9';
+                const docRef = doc(db, 'meta', 'trustStats');
+                const docSnap = await getDoc(docRef);
                 
-                // Always use the production URL to avoid needing the local emulator running
-                const functionUrl = `https://us-central1-${projectId}.cloudfunctions.net/getTrustStats`;
-
-                const response = await fetch(functionUrl);
-                
-                if (response.ok) {
-                    const data = await response.json();
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
                     setStats({
                         totalUsers: data.totalUsers || 0,
                         totalPrompts: data.totalPrompts || 0,
@@ -57,7 +55,7 @@ const TrustStats = () => {
                         totalViews: data.totalViews || 0,
                     });
                 } else {
-                    console.error('Failed to fetch trust stats:', await response.text());
+                    console.error('Trust stats doc not found');
                 }
             } catch (err) {
                 console.log('Could not fetch trust stats:', err);

@@ -1892,3 +1892,65 @@ exports.getPromptDetails = onRequest(
     }
   }
 );
+
+// ═══════════════════════════════════════════════════════════
+//  updateHomepagePromptsCache — Scheduled function
+//  Runs every hour to cache the top 200 most popular prompts 
+//  into a single Firestore document for instant homepage loading.
+// ═══════════════════════════════════════════════════════════
+async function computeAndCacheHomepagePrompts() {
+  console.log("[Homepage Cache] Starting top prompts fetch...");
+  const HOMEPAGE_LIMIT = 200;
+  
+  try {
+    const q = db.collection("prompts")
+      .orderBy("impressions", "desc")
+      .limit(HOMEPAGE_LIMIT);
+      
+    const snapshot = await q.get();
+    
+    if (snapshot.empty) {
+      console.log("[Homepage Cache] No prompts found.");
+      return { success: true, count: 0 };
+    }
+    
+    const promptsData = snapshot.docs.map(doc => {
+      const data = doc.data();
+      // Remove embedding to save space in the cache document
+      delete data.embedding;
+      return {
+        id: doc.id,
+        ...data
+      };
+    });
+    
+    // Save to the single cache document
+    await db.collection("meta").doc("homepagePrompts").set({
+      prompts: promptsData,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    
+    console.log(`[Homepage Cache] Successfully cached ${promptsData.length} prompts.`);
+    return { success: true, count: promptsData.length };
+  } catch (err) {
+    console.error("[Homepage Cache] Error:", err);
+    throw err;
+  }
+}
+
+exports.updateHomepagePromptsCache = onSchedule("every 1 hours", async (event) => {
+  await computeAndCacheHomepagePrompts();
+});
+
+// HTTP trigger to manually update the cache (useful for admin dashboard or forced syncs)
+exports.updateHomepagePromptsCacheHttp = onRequest(
+  { cors: true, maxInstances: 1, region: "us-central1" },
+  async (req, res) => {
+    try {
+      const result = await computeAndCacheHomepagePrompts();
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+);

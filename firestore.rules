@@ -25,6 +25,14 @@ service cloud.firestore {
     }
 
     // ═══════════════════════════════════════════
+    //  Meta: public read, admin-only write
+    // ═══════════════════════════════════════════
+    match /meta/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ═══════════════════════════════════════════
     //  Contact messages: anyone can create, admin reads
     // ═══════════════════════════════════════════
     match /contactMessages/{messageId} {
