@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, getDocs, query, orderBy, limit, where, getCountFromServer, startAfter, doc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, limit, where, startAfter, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import { useAuth } from '../context/AuthContext';
 import Hero from '../components/Hero';
 import SearchBar from '../components/SearchBar';
 import PromptCard from '../components/PromptCard';
@@ -22,8 +23,16 @@ const shuffleArray = (array: any[]) => {
     return shuffled;
 };
 
+interface TrustStatsData {
+    totalUsers: number;
+    totalPrompts: number;
+    recentPrompts: number;
+    totalViews: number;
+}
+
 const HomePage = () => {
     const navigate = useNavigate();
+    const { user } = useAuth();
     const [allPrompts, setAllPrompts] = useState<Prompt[]>([]);
     const [categoryNames, setCategoryNames] = useState<string[]>([]);
     const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
@@ -34,65 +43,89 @@ const HomePage = () => {
     const [selectedCategory, setSelectedCategory] = useState('All');
     const [loading, setLoading] = useState(true);
 
+    // Trust stats for Hero + TrustStats — loaded once from cache
+    const [trustStats, setTrustStats] = useState<TrustStatsData | null>(null);
+
+    // Batch-loaded favorites set — eliminates per-card Firestore reads
+    const [favoritesSet, setFavoritesSet] = useState<Set<string>>(new Set());
+
     // Pagination cursors
     const [lastVisible, setLastVisible] = useState<any>(null);
     const [hasMoreInDb, setHasMoreInDb] = useState(false);
     const [isFetchingMore, setIsFetchingMore] = useState(false);
 
-    // Initial load: top 200 prompts + extract all unique category names
+    // Initial load: read EVERYTHING from one cached document (meta/homepageCache)
     useEffect(() => {
-        const fetchPrompts = async () => {
+        const fetchHomepageCache = async () => {
             try {
-                // Fetch cached top 200 most popular for the default scrolling view
-                const docRef = doc(db, 'meta', 'homepagePrompts');
-                const snapshot = await getDoc(docRef);
+                // ONE Firestore read for ALL homepage data
+                const cacheRef = doc(db, 'meta', 'homepageCache');
+                const snapshot = await getDoc(cacheRef);
 
-                if (snapshot.exists() && snapshot.data().prompts) {
-                    const firestorePrompts = snapshot.data().prompts as Prompt[];
+                if (snapshot.exists()) {
+                    const cache = snapshot.data();
 
+                    // Prompts
+                    const firestorePrompts = (cache.prompts || []) as Prompt[];
                     setAllPrompts(shuffleArray(firestorePrompts));
                     setLastVisible(null);
                     setHasMoreInDb(false);
 
-                    // Extract unique categories from loaded data
-                    const cats = Array.from(new Set(firestorePrompts.map(p => p.category).filter(Boolean)));
-                    setCategoryNames(cats);
+                    // Trust stats (for Hero + TrustStats)
+                    if (cache.trustStats) {
+                        setTrustStats(cache.trustStats);
+                    }
 
-                    // Fetch total count and category counts in the background so it doesn't block UI
-                    const fetchCountsBg = async () => {
-                        try {
-                            const totalSnapshot = await getCountFromServer(collection(db, 'prompts'));
-                            setTotalCount(totalSnapshot.data().count);
-
-                            const counts: Record<string, number> = {};
-                            await Promise.all(cats.map(async (cat) => {
-                                const catQuery = query(collection(db, 'prompts'), where('category', '==', cat));
-                                const countSnap = await getCountFromServer(catQuery);
-                                counts[cat] = countSnap.data().count;
-                            }));
-                            setCategoryCounts(counts);
-
-                            const sortedCats = cats.sort((a, b) => {
-                                const countA = counts[a] || 0;
-                                const countB = counts[b] || 0;
-                                if (countB !== countA) return countB - countA;
-                                return a.localeCompare(b);
-                            });
-                            setCategoryNames(sortedCats);
-                        } catch (err) {
-                            console.log('Error fetching counts background:', err);
-                        }
-                    };
-                    fetchCountsBg();
+                    // Categories + counts (pre-computed — no background queries needed!)
+                    if (cache.categoryNames) {
+                        setCategoryNames(cache.categoryNames);
+                    }
+                    if (cache.categoryCounts) {
+                        setCategoryCounts(cache.categoryCounts);
+                    }
+                    if (cache.totalCount) {
+                        setTotalCount(cache.totalCount);
+                    }
+                } else {
+                    // Fallback: try the old cache document
+                    const oldRef = doc(db, 'meta', 'homepagePrompts');
+                    const oldSnap = await getDoc(oldRef);
+                    if (oldSnap.exists() && oldSnap.data().prompts) {
+                        const firestorePrompts = oldSnap.data().prompts as Prompt[];
+                        setAllPrompts(shuffleArray(firestorePrompts));
+                        // Extract categories from data as fallback
+                        const cats = Array.from(new Set(firestorePrompts.map(p => p.category).filter(Boolean)));
+                        setCategoryNames(cats);
+                    }
                 }
             } catch (err) {
-                console.log('Could not fetch prompts:', err);
+                console.log('Could not fetch homepage cache:', err);
             } finally {
                 setLoading(false);
             }
         };
-        fetchPrompts();
+        fetchHomepageCache();
     }, []);
+
+    // Batch-load all user favorites in ONE query (instead of per-card reads)
+    useEffect(() => {
+        if (!user) {
+            setFavoritesSet(new Set());
+            return;
+        }
+        const loadFavorites = async () => {
+            try {
+                const favsRef = collection(db, 'users', user.uid, 'favorites');
+                const favsSnap = await getDocs(favsRef);
+                const ids = new Set<string>();
+                favsSnap.forEach(doc => ids.add(doc.id));
+                setFavoritesSet(ids);
+            } catch (err) {
+                console.log('Could not batch-load favorites:', err);
+            }
+        };
+        loadFavorites();
+    }, [user]);
 
     // When a category is selected, fetch that category's prompts from Firestore directly
     useEffect(() => {
@@ -129,13 +162,13 @@ const HomePage = () => {
     // When switching back to "All", reload the default set
     const handleCategoryChange = (cat: string) => {
         if (cat === 'All' && selectedCategory !== 'All') {
-            // Re-fetch the default top 200
+            // Re-fetch from cache
             setSelectedCategory('All');
             setLoading(true);
             const fetchDefault = async () => {
                 try {
-                    const docRef = doc(db, 'meta', 'homepagePrompts');
-                    const snapshot = await getDoc(docRef);
+                    const cacheRef = doc(db, 'meta', 'homepageCache');
+                    const snapshot = await getDoc(cacheRef);
                     if (snapshot.exists() && snapshot.data().prompts) {
                         const firestorePrompts = snapshot.data().prompts as Prompt[];
                         setAllPrompts(shuffleArray(firestorePrompts));
@@ -228,7 +261,7 @@ const HomePage = () => {
 
     return (
         <>
-            <Hero />
+            <Hero trustStats={trustStats} />
 
             <section className="container" id="prompt-grid">
                 {/* Search + Filter */}
@@ -301,7 +334,7 @@ const HomePage = () => {
                         <>
                             <div className="grid">
                                 {visibleFilteredPrompts.map((prompt) => (
-                                    <PromptCard key={prompt.id} prompt={prompt} />
+                                    <PromptCard key={prompt.id} prompt={prompt} favoritesSet={favoritesSet} onFavToggle={setFavoritesSet} />
                                 ))}
                             </div>
 
@@ -335,7 +368,7 @@ const HomePage = () => {
                                             <div className="prompt-marquee-slide">
                                                 {[...row1Prompts, ...row1Prompts].map((prompt, i) => (
                                                     <div className="prompt-marquee-card" key={`r1-${chunkIndex}-${prompt.id}-${i}`}>
-                                                        <PromptCard prompt={prompt} />
+                                                        <PromptCard prompt={prompt} favoritesSet={favoritesSet} onFavToggle={setFavoritesSet} />
                                                     </div>
                                                 ))}
                                             </div>
@@ -345,7 +378,7 @@ const HomePage = () => {
                                             <div className="prompt-marquee-slide">
                                                 {[...row2Prompts, ...row2Prompts].map((prompt, i) => (
                                                     <div className="prompt-marquee-card" key={`r2-${chunkIndex}-${prompt.id}-${i}`}>
-                                                        <PromptCard prompt={prompt} />
+                                                        <PromptCard prompt={prompt} favoritesSet={favoritesSet} onFavToggle={setFavoritesSet} />
                                                     </div>
                                                 ))}
                                             </div>
@@ -355,7 +388,7 @@ const HomePage = () => {
                                             <div className="prompt-marquee-slide">
                                                 {[...row3Prompts, ...row3Prompts].map((prompt, i) => (
                                                     <div className="prompt-marquee-card" key={`r3-${chunkIndex}-${prompt.id}-${i}`}>
-                                                        <PromptCard prompt={prompt} />
+                                                        <PromptCard prompt={prompt} favoritesSet={favoritesSet} onFavToggle={setFavoritesSet} />
                                                     </div>
                                                 ))}
                                             </div>

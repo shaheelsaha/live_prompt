@@ -1,27 +1,21 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Rocket } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import TrustStats from './TrustStats';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../firebase/config';
 
-const Hero = () => {
+interface TrustStatsData {
+    totalUsers: number;
+    totalPrompts: number;
+    recentPrompts: number;
+    totalViews: number;
+}
+
+interface HeroProps {
+    trustStats?: TrustStatsData | null;
+}
+
+const Hero = ({ trustStats }: HeroProps) => {
     const navigate = useNavigate();
-    const [totalPrompts, setTotalPrompts] = useState<number | null>(null);
-
-    useEffect(() => {
-        const fetchTotalPrompts = async () => {
-                const docRef = doc(db, 'meta', 'trustStats');
-                const docSnap = await getDoc(docRef);
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    if (data.totalPrompts) {
-                        setTotalPrompts(data.totalPrompts);
-                    }
-                }
-        };
-        fetchTotalPrompts();
-    }, []);
+    const totalPrompts = trustStats?.totalPrompts ?? null;
 
     return (
         <header className="hero">
@@ -54,7 +48,7 @@ const Hero = () => {
                 </div>
 
                 {/* Live Trust Stats */}
-                <TrustStats />
+                <TrustStats trustStats={trustStats} />
             </div>
         </header>
     );

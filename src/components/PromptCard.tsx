@@ -8,23 +8,33 @@ import type { Prompt } from '../types/Prompt';
 
 interface PromptCardProps {
     prompt: Prompt;
+    /** Pre-loaded set of favorite prompt IDs — eliminates per-card Firestore reads */
+    favoritesSet?: Set<string>;
+    /** Callback to update the parent's favorites set after toggle */
+    onFavToggle?: (updater: (prev: Set<string>) => Set<string>) => void;
 }
 
 
 
-const PromptCard = ({ prompt }: PromptCardProps) => {
+const PromptCard = ({ prompt, favoritesSet, onFavToggle }: PromptCardProps) => {
     const { user } = useAuth();
-    const [isFav, setIsFav] = useState(false);
+    
+    // If favoritesSet is provided (batch mode), use it; otherwise fall back to per-card check
+    const isBatchMode = favoritesSet !== undefined;
+    const [localFav, setLocalFav] = useState(false);
 
+    // Fallback: per-card check when no batch set is provided (used by SearchPage, DashboardPage, etc.)
     useEffect(() => {
-        if (!user) return;
+        if (isBatchMode || !user) return;
         const checkFav = async () => {
             const favRef = doc(db, 'users', user.uid, 'favorites', prompt.id);
             const snap = await getDoc(favRef);
-            setIsFav(snap.exists());
+            setLocalFav(snap.exists());
         };
         checkFav();
-    }, [user, prompt.id]);
+    }, [user, prompt.id, isBatchMode]);
+
+    const isFav = isBatchMode ? (favoritesSet?.has(prompt.id) ?? false) : localFav;
 
     const toggleFav = async (e: React.MouseEvent) => {
         e.preventDefault();
@@ -32,11 +42,29 @@ const PromptCard = ({ prompt }: PromptCardProps) => {
         if (!user) return;
         const favRef = doc(db, 'users', user.uid, 'favorites', prompt.id);
         if (isFav) {
+            // Optimistic UI update
+            if (isBatchMode) {
+                onFavToggle?.(prev => {
+                    const next = new Set(prev);
+                    next.delete(prompt.id);
+                    return next;
+                });
+            } else {
+                setLocalFav(false);
+            }
             await deleteDoc(favRef);
-            setIsFav(false);
         } else {
+            // Optimistic UI update
+            if (isBatchMode) {
+                onFavToggle?.(prev => {
+                    const next = new Set(prev);
+                    next.add(prompt.id);
+                    return next;
+                });
+            } else {
+                setLocalFav(true);
+            }
             await setDoc(favRef, { savedAt: new Date() });
-            setIsFav(true);
         }
     };
 

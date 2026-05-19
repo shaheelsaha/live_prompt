@@ -1895,52 +1895,119 @@ exports.getPromptDetails = onRequest(
 
 // ═══════════════════════════════════════════════════════════
 //  updateHomepagePromptsCache — Scheduled function
-//  Runs every hour to cache the top 200 most popular prompts 
-//  into a single Firestore document for instant homepage loading.
+//  Runs every 30 minutes to cache ALL homepage data into a
+//  single Firestore document for instant homepage loading.
+//  Includes: stripped prompts, trust stats, category counts.
+//  This eliminates ~40+ Firestore reads per homepage visit.
 // ═══════════════════════════════════════════════════════════
+
+// Fields to keep for PromptCard rendering — everything else is stripped
+const CARD_FIELDS = [
+  "title", "slug", "shortCode", "category", "platform",
+  "promptType", "outputMediaType",
+  "afterImage", "afterImageThumb",
+  "outputMedia", "outputMediaThumb",
+  "beforeImage", "beforeImageThumb",
+  "images",
+];
+
 async function computeAndCacheHomepagePrompts() {
-  console.log("[Homepage Cache] Starting top prompts fetch...");
+  console.log("[Homepage Cache] Starting full homepage cache build...");
   const HOMEPAGE_LIMIT = 200;
-  
+
   try {
+    // ── 1. Fetch top 200 prompts (stripped to card-only fields) ──
     const q = db.collection("prompts")
       .orderBy("impressions", "desc")
       .limit(HOMEPAGE_LIMIT);
-      
+
     const snapshot = await q.get();
-    
-    if (snapshot.empty) {
-      console.log("[Homepage Cache] No prompts found.");
-      return { success: true, count: 0 };
-    }
-    
+
     const promptsData = snapshot.docs.map(doc => {
       const data = doc.data();
-      // Remove embedding to save space in the cache document
-      delete data.embedding;
-      return {
-        id: doc.id,
-        ...data
-      };
+      const stripped = { id: doc.id };
+      for (const field of CARD_FIELDS) {
+        if (data[field] !== undefined) {
+          stripped[field] = data[field];
+        }
+      }
+      return stripped;
     });
-    
-    // Save to the single cache document
-    await db.collection("meta").doc("homepagePrompts").set({
+
+    // ── 2. Compute trust stats (same logic as computeTrustStats) ──
+    const [usersSnap, promptsCountSnap] = await Promise.all([
+      db.collection("users").count().get(),
+      db.collection("prompts").count().get(),
+    ]);
+    const totalUsers = usersSnap.data().count;
+    const totalPrompts = promptsCountSnap.data().count;
+
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const recentSnap = await db.collection("prompts")
+      .where("createdAt", ">=", admin.firestore.Timestamp.fromDate(sevenDaysAgo))
+      .count()
+      .get();
+    const recentPrompts = recentSnap.data().count;
+
+    let totalViews = 0;
+    try {
+      const viewsSnap = await db.collection("prompts")
+        .aggregate({ totalViews: admin.firestore.AggregateField.sum("impressions") })
+        .get();
+      totalViews = viewsSnap.data().totalViews || 0;
+    } catch (aggErr) {
+      console.warn("[Homepage Cache] Aggregate sum failed, using manual count");
+      const allDocs = await db.collection("prompts").select("impressions").get();
+      allDocs.forEach(doc => { totalViews += doc.data().impressions || 0; });
+    }
+
+    // ── 3. Compute category names + counts ──
+    const uniqueCats = Array.from(new Set(promptsData.map(p => p.category).filter(Boolean)));
+    const categoryCounts = {};
+    await Promise.all(uniqueCats.map(async (cat) => {
+      const catSnap = await db.collection("prompts").where("category", "==", cat).count().get();
+      categoryCounts[cat] = catSnap.data().count;
+    }));
+
+    // Sort categories by count descending
+    const sortedCats = uniqueCats.sort((a, b) => {
+      const diff = (categoryCounts[b] || 0) - (categoryCounts[a] || 0);
+      return diff !== 0 ? diff : a.localeCompare(b);
+    });
+
+    // ── 4. Write everything to ONE document ──
+    const cachePayload = {
       prompts: promptsData,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      trustStats: { totalUsers, totalPrompts, recentPrompts, totalViews },
+      categoryNames: sortedCats,
+      categoryCounts,
+      totalCount: totalPrompts,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    await db.collection("meta").doc("homepageCache").set(cachePayload);
+
+    // Also keep trustStats in sync for other consumers (SearchPage, etc.)
+    await db.collection("meta").doc("trustStats").set({
+      totalUsers, totalPrompts, recentPrompts, totalViews,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-    
-    console.log(`[Homepage Cache] Successfully cached ${promptsData.length} prompts.`);
-    return { success: true, count: promptsData.length };
+
+    console.log(`[Homepage Cache] Cached ${promptsData.length} prompts, ${sortedCats.length} categories, stats.`);
+    return { success: true, count: promptsData.length, categories: sortedCats.length };
   } catch (err) {
     console.error("[Homepage Cache] Error:", err);
     throw err;
   }
 }
 
-exports.updateHomepagePromptsCache = onSchedule("every 1 hours", async (event) => {
-  await computeAndCacheHomepagePrompts();
-});
+exports.updateHomepagePromptsCache = onSchedule(
+  { schedule: "every 30 minutes", region: "us-central1", timeZone: "UTC" },
+  async () => {
+    await computeAndCacheHomepagePrompts();
+  }
+);
 
 // HTTP trigger to manually update the cache (useful for admin dashboard or forced syncs)
 exports.updateHomepagePromptsCacheHttp = onRequest(

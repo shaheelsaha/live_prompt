@@ -1,13 +1,15 @@
 import { useEffect, useState, useRef } from 'react';
 import { Users, Sparkles, Clock, Eye } from 'lucide-react';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../firebase/config';
 
 interface Stats {
     totalUsers: number;
     totalPrompts: number;
     recentPrompts: number;
     totalViews: number;
+}
+
+interface TrustStatsProps {
+    trustStats?: Stats | null;
 }
 
 const useCountUp = (end: number, duration = 2000) => {
@@ -36,35 +38,9 @@ const formatNumber = (num: number): string => {
     return num.toLocaleString();
 };
 
-const TrustStats = () => {
-    const [stats, setStats] = useState<Stats>({ totalUsers: 0, totalPrompts: 0, recentPrompts: 0, totalViews: 0 });
-    const [loaded, setLoaded] = useState(false);
-
-    useEffect(() => {
-        const fetchStats = async () => {
-            try {
-                const docRef = doc(db, 'meta', 'trustStats');
-                const docSnap = await getDoc(docRef);
-                
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    setStats({
-                        totalUsers: data.totalUsers || 0,
-                        totalPrompts: data.totalPrompts || 0,
-                        recentPrompts: data.recentPrompts || 0,
-                        totalViews: data.totalViews || 0,
-                    });
-                } else {
-                    console.error('Trust stats doc not found');
-                }
-            } catch (err) {
-                console.log('Could not fetch trust stats:', err);
-            } finally {
-                setLoaded(true);
-            }
-        };
-        fetchStats();
-    }, []);
+const TrustStats = ({ trustStats }: TrustStatsProps) => {
+    const stats = trustStats || { totalUsers: 0, totalPrompts: 0, recentPrompts: 0, totalViews: 0 };
+    const loaded = !!trustStats;
 
     const animatedUsers = useCountUp(stats.totalUsers);
     const animatedPrompts = useCountUp(stats.totalPrompts);
